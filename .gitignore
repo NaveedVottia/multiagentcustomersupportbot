@@ -1,0 +1,13 @@
+node_modules/
+.mastra/output/
+.mastra/.build/
+.pm2/
+server.env
+.env
+*.log
+.DS_Store
+coverage/
+dist/
+.tmp/
+.npmrc
+

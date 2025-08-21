@@ -1,0 +1,45 @@
+{
+  "name": "sanden-repair-system",
+  "version": "1.0.0",
+  "description": "Sanden Repair System built with Mastra",
+  "main": "dist/index.js",
+  "type": "module",
+  "scripts": {
+    "dev": "mastra dev",
+    "build": "mastra build",
+    "start": "mastra start",
+    "deploy": "bash scripts/deploy-lightsail.sh"
+  },
+  "keywords": [
+    "mastra",
+    "repair",
+    "system",
+    "ai"
+  ],
+  "author": "",
+  "license": "ISC",
+  "engines": {
+    "node": ">=20.9.0"
+  },
+  "dependencies": {
+    "@ai-sdk/amazon-bedrock": "^2.2.12",
+    "@langtrase/typescript-sdk": "^6.3.7",
+    "@mastra/client-js": "^0.10.21",
+    "@mastra/core": "^0.13.2",
+    "@mastra/libsql": "^0.13.2",
+    "@mastra/loggers": "^0.10.6",
+    "@mastra/memory": "^0.12.2",
+    "@mastra/server": "^0.13.2",
+    "ai": "^5.0.16",
+    "langfuse": "^2.0.0",
+    "pm2": "^6.0.8",
+    "uuid": "^9.0.1",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.0",
+    "@types/uuid": "^9.0.8",
+    "mastra": "^0.10.21",
+    "typescript": "^5.9.2"
+  }
+}
