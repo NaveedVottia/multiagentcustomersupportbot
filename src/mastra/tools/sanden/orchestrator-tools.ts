@@ -192,6 +192,61 @@ export const updateWorkflowState = createTool({
   },
 });
 
+export const lookupCustomerFromDatabase = createTool({
+  id: "lookupCustomerFromDatabase",
+  description: "Look up real customer data from the database using store name or other identifiers",
+  inputSchema: z.object({ storeName: z.string(), searchType: z.enum(["store_name", "customer_id", "phone", "email"]).optional() }),
+  outputSchema: z.object({ success: z.boolean(), customerData: z.record(z.any()).optional(), found: z.boolean() }),
+  async execute(args: ToolExecuteArgs) {
+    const { storeName, searchType = "store_name" } = getArgs(args) as { storeName: string; searchType?: string };
+    const traceId = await langfuse.startTrace("tool.lookupCustomerFromDatabase");
+    
+    try {
+      // Map search type to database column
+      const lookupColumn = searchType === "store_name" ? "会社名" : 
+                          searchType === "customer_id" ? "顧客ID" :
+                          searchType === "phone" ? "電話番号" : "メールアドレス";
+      
+      // Look up customer data from Google Sheets via Zapier MCP
+      const result = await zapierMcp.callTool("google_sheets_lookup_spreadsheet_rows_advanced", {
+        instructions: `Look up customer data by ${searchType}`,
+        worksheet: "Customers",
+        lookup_key: lookupColumn,
+        lookup_value: storeName,
+        row_count: "1"
+      });
+      
+      if (result && result.length > 0) {
+        const customer = result[0];
+        const customerData = {
+          customerId: customer["顧客ID"],
+          storeName: customer["会社名"],
+          email: customer["メールアドレス"],
+          phone: customer["電話番号"],
+          location: customer["所在地"],
+          found: true
+        };
+        
+        const res = { success: true, customerData, found: true };
+        await langfuse.logToolExecution(traceId, "lookupCustomerFromDatabase", { storeName, searchType }, res);
+        await langfuse.endTrace(traceId, { success: true });
+        return res;
+      }
+      
+      const res = { success: true, customerData: null, found: false };
+      await langfuse.logToolExecution(traceId, "lookupCustomerFromDatabase", { storeName, searchType }, res);
+      await langfuse.endTrace(traceId, { success: true });
+      return res;
+    } catch (error) {
+      console.error("Failed to lookup customer data:", error);
+      const res = { success: false, customerData: null, found: false };
+      await langfuse.logToolExecution(traceId, "lookupCustomerFromDatabase", { storeName, searchType }, res);
+      await langfuse.endTrace(traceId, { success: false });
+      return res;
+    }
+  },
+});
+
 export const logCustomerData = createTool({
   id: "logCustomerData",
   description: "Automatically log extracted customer data to Google Sheets via Zapier MCP",
@@ -202,16 +257,15 @@ export const logCustomerData = createTool({
     const traceId = await langfuse.startTrace("tool.logCustomerData");
     
     try {
-      // Log to Google Sheets via Zapier MCP
+      // Log to Google Sheets via Zapier MCP using correct database schema
       await zapierMcp.callTool("google_sheets_create_spreadsheet_row", {
-        instructions: "Log customer data extraction",
-        Timestamp: new Date().toISOString(),
-        "Customer ID": customerData.customerId || `CUST-${Date.now()}`,
-        "Store Name": customerData.storeName || customerData.name || "",
-        "Store Code": customerData.storeCode || customerData.code || "",
-        "Address": customerData.address || "",
-        "Phone Number": customerData.phoneNumber || customerData.phone || "",
-        "Email": customerData.email || "",
+        instructions: "Log customer data extraction to Customers worksheet",
+        worksheet: "Customers",
+        "顧客ID": customerData.customerId || `CUST-${Date.now()}`,
+        "会社名": customerData.storeName || customerData.name || customerData.companyName || "",
+        "メールアドレス": customerData.email || customerData.emailAddress || "",
+        "電話番号": customerData.phoneNumber || customerData.phone || customerData.telephone || "",
+        "所在地": customerData.address || customerData.location || customerData.area || "",
         "Source": source || "customer-identification",
         "Raw Data": JSON.stringify(customerData),
         "Status": "Identified",
@@ -233,4 +287,4 @@ export const logCustomerData = createTool({
   },
 });
 
-export const orchestratorTools = { delegateTo, escalateToHuman, validateContext, updateWorkflowState, logCustomerData };
+export const orchestratorTools = { delegateTo, escalateToHuman, validateContext, updateWorkflowState, logCustomerData, lookupCustomerFromDatabase };
