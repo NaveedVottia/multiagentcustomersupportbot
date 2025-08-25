@@ -280,10 +280,30 @@ export const customerTools = {
     execute: async ({ context }: { context: any }) => {
       const { query, sessionId, count = 0 } = context;
       try {
+        // First try exact matches
         const byCompany = await mcpLookupRows("Customers", "会社名", query);
         const byEmail = await mcpLookupRows("Customers", "メールアドレス", query);
         const byPhone = await mcpLookupRows("Customers", "電話番号", query);
         let merged = [...(byCompany?.results||[]), ...(byEmail?.results||[]), ...(byPhone?.results||[])];
+        
+        // If no exact matches, try smart English-Japanese name mapping
+        if (!merged.length && query.toLowerCase().includes("welcia")) {
+          // Handle English store names that should map to Japanese database entries
+          const smartQueries = ["ウエルシア", "ウエルシア 川崎駅前店"];
+          
+          for (const smartQuery of smartQueries) {
+            try {
+              const smartResult = await mcpLookupRows("Customers", "会社名", smartQuery);
+              if (smartResult?.results && smartResult.results.length > 0) {
+                merged = smartResult.results;
+                break;
+              }
+            } catch (error) {
+              console.error(`Smart query "${smartQuery}" failed:`, error);
+            }
+          }
+        }
+        
         if (!merged.length) {
           // Fallback: scan all rows and do substring match client-side
           const all = await zapierMcp.callTool("google_sheets_get_many_spreadsheet_rows_advanced", {
@@ -299,6 +319,7 @@ export const customerTools = {
             return String(name).includes(query) || String(email).includes(query) || String(phone).includes(query);
           });
         }
+        
         if (merged.length) {
           return {
             success: true,
