@@ -1,0 +1,12 @@
+nohup: ignoring input
+[Langfuse] ✅ Loaded prompt via SDK: routing-agent-customer-identification (v10)
+[Langfuse] ✅ Loaded prompt via SDK: repair-qa-agent-issue-analysis (v6)
+[Langfuse] ✅ Loaded prompt via SDK: repair-visit-confirmation-agent (v6)
+[Langfuse] ✅ Loaded prompt via SDK: repair-workflow-orchestrator (v8)
+✅ Mastra instance created with 5 agents
+✅ Main endpoint: POST /api/agents/repair-workflow-orchestrator/stream
+✅ The orchestrator will delegate to other agents using the delegateTo tool
+✅ Orchestrator agent verified
+[32mINFO[39m [2025-08-25 03:11:15.263 +0000] (Sanden Repair System): [36m Mastra API running on port http://localhost:4111/api[39m
+[32mINFO[39m [2025-08-25 03:11:15.270 +0000] (Sanden Repair System): [36m👨‍💻 Playground available at http://localhost:4111[39m
+[Langfuse] ✅ Loaded prompt via SDK: repair-agent-product-selection (v8)

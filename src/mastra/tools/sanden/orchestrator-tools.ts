@@ -1,5 +1,7 @@
 import { createTool } from "@mastra/core/tools";
+import { langfuse } from "../../../integrations/langfuse";
 import { z } from "zod";
+import { zapierMcp } from "../../../integrations/zapier-mcp";
 
 let mastraInstance: any;
 
@@ -7,8 +9,28 @@ export function setMastraInstance(instance: any) {
   mastraInstance = instance;
 }
 
+// SANITIZATION HELPER - Remove CUSTOMER_DATA_* markers and sensitive data
+const sanitizeResponse = (text: string): string => {
+  return text
+    .replace(/CUSTOMER_DATA_START[\s\S]*?CUSTOMER_DATA_END/g, '')
+    .replace(/CUSTOMER_DATA_\w+/g, '')
+    .replace(/CUSTOMER_/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+};
+
 function getArgs<T = any>(args: any): T {
-  const payload = args?.input ?? args?.context ?? {};
+  // Accept tool args from multiple shapes: {input}, {context}, or top-level
+  const inputPart = (args && typeof args === "object" ? args.input : undefined) || {};
+  const contextPart = (args && typeof args === "object" ? args.context : undefined) || {};
+  const topLevelPart: Record<string, any> = {};
+  if (args && typeof args === "object") {
+    for (const [key, value] of Object.entries(args)) {
+      if (key === "writer" || key === "mastra" || key === "input" || key === "context") continue;
+      topLevelPart[key] = value;
+    }
+  }
+  const payload = { ...topLevelPart, ...contextPart, ...inputPart };
   return payload as T;
 }
 
@@ -24,14 +46,21 @@ function extractDataFromResponse(response: string, dataType: string): any {
   return null;
 }
 
+type ToolExecuteArgs = { input?: any; context?: any; writer?: any; mastra?: any };
+
 export const delegateTo = createTool({
   id: "delegateTo",
   description: "Delegates to another agent and pipes their stream back",
-  inputSchema: z.object({ agentId: z.string(), message: z.string(), context: z.record(z.any()).optional() }),
+  // Accept both strict and loose calls; default to customer-identification
+  inputSchema: z.object({ agentId: z.string().optional(), message: z.string().optional(), context: z.record(z.any()).optional() }),
   outputSchema: z.object({ ok: z.boolean(), agentId: z.string(), extractedData: z.any().optional() }),
-  async execute(args) {
+  async execute(args: ToolExecuteArgs) {
     const { writer, mastra } = args as any;
-    const { agentId, message, context: agentContext } = getArgs(args) as { agentId: string; message: string; context?: Record<string, any> };
+    const parsed = getArgs(args) as { agentId?: string; message?: string; context?: Record<string, any> };
+    const agentId = parsed.agentId || "routing-agent-customer-identification";
+    const agentContext = parsed.context;
+    const message = parsed.message || "顧客情報の確認をお願いします。";
+    const traceId = await langfuse.startTrace("tool.delegateTo", { agentId, hasContext: !!agentContext });
     try {
       const instance = (mastra as any) || mastraInstance;
       const agent = instance?.getAgentById ? instance.getAgentById(agentId) : instance?.agents?.[agentId];
@@ -44,8 +73,17 @@ export const delegateTo = createTool({
       let fullResponse = "";
       if (stream) {
         for await (const chunk of stream as any) {
-          if (writer) writer.write(chunk);
-          if ((chunk as any).text) fullResponse += (chunk as any).text; else if (typeof chunk === "string") fullResponse += chunk;
+          // SANITIZE CHUNKS BEFORE WRITING TO UI
+          let sanitizedChunk = chunk;
+          if ((chunk as any).text) {
+            sanitizedChunk = { ...chunk, text: sanitizeResponse((chunk as any).text) };
+            fullResponse += (chunk as any).text; // Keep original for data extraction
+          } else if (typeof chunk === "string") {
+            sanitizedChunk = sanitizeResponse(chunk);
+            fullResponse += chunk; // Keep original for data extraction
+          }
+          
+          if (writer) writer.write(sanitizedChunk);
         }
       }
       let extractedData = null;
@@ -53,9 +91,13 @@ export const delegateTo = createTool({
       else if (agentId === "repair-agent-product-selection") extractedData = extractDataFromResponse(fullResponse, "PRODUCT");
       else if (agentId === "repair-qa-agent-issue-analysis") extractedData = extractDataFromResponse(fullResponse, "ISSUE");
       else if (agentId === "repair-visit-confirmation-agent") extractedData = extractDataFromResponse(fullResponse, "REPAIR");
+      await langfuse.logToolExecution(traceId, "delegateTo", { agentId, messageLength: message?.length || 0 }, { ok: true, agentId, extractedData }, { extractedKeys: extractedData ? Object.keys(extractedData) : [] });
+      await langfuse.endTrace(traceId, { success: true });
       return { ok: true, agentId, extractedData };
     } catch (error) {
       // Do not stream internal errors to user; return neutral failure
+      await langfuse.logToolExecution(null, "delegateTo", { agentId }, { ok: false }, { error: String(error) });
+      await langfuse.endTrace(null, { success: false });
       return { ok: false, agentId, extractedData: null as any };
     }
   },
@@ -66,20 +108,35 @@ export const escalateToHuman = createTool({
   description: "Escalate to human support for emergency or complex issues",
   inputSchema: z.object({ reason: z.string(), priority: z.enum(["Low", "Medium", "High", "Emergency"]), context: z.record(z.any()).optional() }),
   outputSchema: z.object({ success: z.boolean(), escalationId: z.string().optional(), message: z.string().optional() }),
-  async execute(args) {
+  async execute(args: ToolExecuteArgs) {
     const { reason, priority, context } = getArgs(args) as { reason: string; priority: "Low"|"Medium"|"High"|"Emergency"; context?: any };
+    const traceId = await langfuse.startTrace("tool.escalateToHuman", { priority });
     if (priority !== "Emergency") {
       // Return neutral success; agent will phrase user-facing message
-      return { success: true, escalationId: `DELEGATE-${Date.now()}`, message: "" };
+      const res = { success: true, escalationId: `DELEGATE-${Date.now()}`, message: "" };
+      await langfuse.logToolExecution(traceId, "escalateToHuman", { reason, priority }, res);
+      await langfuse.endTrace(traceId, { success: true });
+      return res;
     }
     const escalationId = `ESC-${Date.now()}`;
-    const webhookUrl = process.env.ZAPIER_WEBHOOK_URL;
-    if (webhookUrl) {
-      try {
-        await fetch(webhookUrl, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ event: "emergency_escalation", payload: { reason, priority, context, escalationId }, timestamp: new Date().toISOString() }) });
-      } catch {}
-    }
-    return { success: true, escalationId, message: "" };
+    try {
+      await zapierMcp.callTool("google_sheets_create_spreadsheet_row", {
+        instructions: "orchestrator escalation log",
+        Timestamp: new Date().toISOString(),
+        "Repair ID": context?.repairId || "",
+        Status: priority,
+        "Customer ID": context?.customerId || "",
+        "Product ID": context?.productId || "",
+        "担当者 (Handler)": "HUMAN",
+        Issue: reason,
+        Source: "orchestrator",
+        Raw: JSON.stringify(context || {}),
+      });
+    } catch {}
+    const out = { success: true, escalationId, message: "" };
+    await langfuse.logToolExecution(traceId, "escalateToHuman", { reason, priority }, out);
+    await langfuse.endTrace(traceId, { success: true });
+    return out;
   },
 });
 
@@ -88,8 +145,9 @@ export const validateContext = createTool({
   description: "Validate workflow context structure",
   inputSchema: z.object({ context: z.record(z.any()), requiredFields: z.array(z.string()).optional(), schema: z.string().optional() }),
   outputSchema: z.object({ isValid: z.boolean(), missingFields: z.array(z.string()), message: z.string() }),
-  async execute(args) {
+  async execute(args: ToolExecuteArgs) {
     const { context, requiredFields, schema } = getArgs(args) as { context: any; requiredFields?: string[]; schema?: string };
+    const traceId = await langfuse.startTrace("tool.validateContext");
     if (schema) return { isValid: true, missingFields: [], message: "ok" };
     const missing: string[] = [];
     for (const field of requiredFields || []) {
@@ -98,7 +156,10 @@ export const validateContext = createTool({
       for (const key of keys) value = value?.[key];
       if (value === undefined || value === null) missing.push(field);
     }
-    return { isValid: missing.length === 0, missingFields: missing, message: missing.length === 0 ? "ok" : "missing" };
+    const res = { isValid: missing.length === 0, missingFields: missing, message: missing.length === 0 ? "ok" : "missing" };
+    await langfuse.logToolExecution(traceId, "validateContext", { requiredFields }, res);
+    await langfuse.endTrace(traceId, { success: true });
+    return res;
   },
 });
 
@@ -107,10 +168,14 @@ export const updateWorkflowState = createTool({
   description: "Update workflow state with new data",
   inputSchema: z.object({ currentState: z.record(z.any()).optional(), updates: z.record(z.any()).optional(), newState: z.record(z.any()).optional() }),
   outputSchema: z.object({ success: z.boolean(), newState: z.record(z.any()) }),
-  async execute(args) {
+  async execute(args: ToolExecuteArgs) {
     const payload = getArgs(args) as { currentState?: any; updates?: any; newState?: any };
+    const traceId = await langfuse.startTrace("tool.updateWorkflowState");
     const newState = payload.newState ?? { ...(payload.currentState || {}), ...(payload.updates || {}) };
-    return { success: true, newState };
+    const res = { success: true, newState };
+    await langfuse.logToolExecution(traceId, "updateWorkflowState", { hasUpdates: !!payload.updates }, res);
+    await langfuse.endTrace(traceId, { success: true });
+    return res;
   },
 });
 

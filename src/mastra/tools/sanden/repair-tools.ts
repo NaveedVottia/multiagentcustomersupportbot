@@ -1,5 +1,6 @@
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
+import { zapierMcp } from "../../../integrations/zapier-mcp";
 
 export const createRepairTool = createTool({
   id: "createRepair",
@@ -19,19 +20,28 @@ export const createRepairTool = createTool({
     data: z.any(),
     message: z.string(),
   }),
-  execute: async ({ context }) => {
+  execute: async ({ context }: { context: any }) => {
     const { repairData, sessionId } = context;
 
     try {
-      const result = await zapierCall("Repair", {
-        repairData,
-        sessionId,
-        timestamp: new Date().toISOString(),
+      // Append a log row to Logs indicating creation intent
+      await zapierMcp.callTool("google_sheets_create_spreadsheet_row", {
+        instructions: "repair create log",
+        Timestamp: new Date().toISOString(),
+        "Repair ID": "",
+        Status: "CREATE",
+        "Customer ID": repairData?.customerId || "",
+        "Product ID": "",
+        "担当者 (Handler)": "AI",
+        Issue: repairData?.issueDescription || "",
+        Source: "agent",
+        Raw: JSON.stringify(repairData || {}),
       });
+
       return {
         success: true,
-        data: result.data || result,
-        message: result.message || "修理記録を作成しました。",
+        data: repairData,
+        message: "修理記録を作成しました。",
       };
     } catch (error: any) {
       return {
@@ -61,19 +71,21 @@ export const updateRepairTool = createTool({
     data: z.any(),
     message: z.string(),
   }),
-  execute: async ({ context }) => {
+  execute: async ({ context }: { context: any }) => {
     const { repairId, updates, sessionId } = context;
 
     try {
-      const result = await zapierCall("Repair", {
-        sessionId,
-        repairId: repairId || "",
-        updates: updates || {},
+      // Update Spreadsheet Row (Repairs sheet in salesforce_customer_data)
+      await zapierMcp.callTool("google_sheets_update_spreadsheet_row", {
+        instructions: "repair update",
+        修理ID: repairId,
+        ステータス: updates?.status || "",
+        備考: updates?.notes || "",
       });
       return {
         success: true,
-        data: result.data || result,
-        message: result.message || "修理記録を更新しました。",
+        data: { repairId, updates },
+        message: "修理記録を更新しました。",
       };
     } catch (error: any) {
       return {
@@ -97,19 +109,21 @@ export const getRepairStatusTool = createTool({
     data: z.any(),
     message: z.string(),
   }),
-  execute: async ({ context }) => {
+  execute: async ({ context }: { context: any }) => {
     const { repairId, sessionId } = context;
 
     try {
-      const result = await zapierCall("Repair", {
-        sessionId,
-        repairId: repairId || "",
-        status: "pending",
+      const rows = await zapierMcp.callTool("google_sheets_get_many_spreadsheet_rows_advanced", {
+        instructions: "get repair status",
+        worksheet: "Repairs",
+        row_count: 50,
       });
+      const list = (rows?.results as any[]) || [];
+      const found = list.find((r: any) => r?.["COL$A"] === repairId || r?.修理ID === repairId);
       return {
         success: true,
-        data: result.data || result,
-        message: result.message || "修理状況を取得しました。",
+        data: found || null,
+        message: "修理状況を取得しました。",
       };
     } catch (error: any) {
       return {
@@ -120,36 +134,6 @@ export const getRepairStatusTool = createTool({
     }
   },
 });
-
-async function zapierCall(event: string, payload: Record<string, any>) {
-  const webhookUrl = process.env.ZAPIER_WEBHOOK_URL;
-  if (!webhookUrl) {
-    throw new Error("ZAPIER_WEBHOOK_URL not configured");
-  }
-
-  const response = await fetch(webhookUrl, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      event,
-      payload,
-      timestamp: new Date().toISOString(),
-    }),
-  });
-
-  if (!response.ok) {
-    throw new Error(
-      `Zapier webhook failed: ${response.status} ${response.statusText}`
-    );
-  }
-
-  const result = await response.json();
-  return {
-    success: true,
-    data: result.data || result,
-    message: result.message || "Zapier call completed successfully",
-  };
-}
 
 // Export all repair tools
 export const repairTools = {

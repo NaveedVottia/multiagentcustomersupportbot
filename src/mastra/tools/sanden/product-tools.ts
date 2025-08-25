@@ -1,5 +1,6 @@
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
+import { zapierMcp } from "../../../integrations/zapier-mcp";
 
 export const searchProductsTool = createTool({
   id: "searchProducts",
@@ -14,7 +15,7 @@ export const searchProductsTool = createTool({
     data: z.any(),
     message: z.string(),
   }),
-  execute: async ({ context }) => {
+  execute: async ({ context }: { context: any }) => {
     const { query, category, sessionId } = context;
 
     try {
@@ -46,43 +47,20 @@ export const getProductsByCustomerIdTool = createTool({
     data: z.any(),
     message: z.string(),
   }),
-  execute: async ({ context }) => {
+  execute: async ({ context }: { context: any }) => {
     const { customerId, sessionId } = context;
 
     try {
-      // Send to Zapier webhook to get products by customer ID
-      const webhookUrl = process.env.ZAPIER_WEBHOOK_URL;
-      if (!webhookUrl) {
-        throw new Error("ZAPIER_WEBHOOK_URL not configured");
-      }
-
-      const response = await fetch(webhookUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          event: "customer_lookup",
-          payload: {
-            customerId,
-            sessionId,
-            action: "getProducts",
-          },
-          timestamp: new Date().toISOString(),
-        }),
+      const result = await zapierMcp.callTool("google_sheets_lookup_spreadsheet_rows_advanced", {
+        instructions: "Get products by 顧客ID",
+        worksheet: "Products",
+        lookup_key: "顧客ID",
+        lookup_value: customerId,
       });
-
-      if (!response.ok) {
-        throw new Error(
-          `Zapier webhook failed: ${response.status} ${response.statusText}`
-        );
-      }
-
-      const result = await response.json();
       return {
         success: true,
-        data: result.data || result,
-        message: result.message || "顧客の製品情報を取得しました。",
+        data: (result?.results as any) || [],
+        message: "顧客の製品情報を取得しました。",
       };
     } catch (error: any) {
       return {
@@ -94,6 +72,98 @@ export const getProductsByCustomerIdTool = createTool({
   },
 });
 
+export const checkWarrantyStatusTool = createTool({
+  id: "checkWarrantyStatus",
+  description: "Check warranty status for a product",
+  inputSchema: z.object({
+    productId: z.string().optional().describe("Product ID"),
+    serial: z.string().optional().describe("Serial number"),
+    purchaseDate: z.string().optional().describe("Purchase date (ISO)"),
+    customerId: z.string().optional().describe("Customer ID"),
+    sessionId: z.string().describe("Session ID for validation"),
+  }),
+  outputSchema: z.object({
+    success: z.boolean(),
+    data: z.any(),
+    message: z.string(),
+  }),
+  execute: async ({ context }: { context: any }) => {
+    const { productId, serial, purchaseDate, customerId, sessionId } = context;
+    try {
+      const result = await zapierCall("Repair", {
+        action: "checkWarranty",
+        productId,
+        serial,
+        purchaseDate,
+        customerId,
+        sessionId,
+      });
+      return { success: true, data: result.data || result, message: result.message || "保証状況を確認しました。" };
+    } catch (error: any) {
+      return { success: false, data: null, message: `Failed to check warranty: ${error.message}` };
+    }
+  },
+});
+
+export const getStandardRepairFeesTool = createTool({
+  id: "getStandardRepairFees",
+  description: "Get standard repair fees for a product category/model",
+  inputSchema: z.object({
+    productCategory: z.string().optional().describe("Product category"),
+    model: z.string().optional().describe("Product model"),
+    sessionId: z.string().describe("Session ID for validation"),
+  }),
+  outputSchema: z.object({
+    success: z.boolean(),
+    data: z.any(),
+    message: z.string(),
+  }),
+  execute: async ({ context }: { context: any }) => {
+    const { productCategory, model, sessionId } = context;
+    try {
+      const result = await zapierCall("Repair", {
+        action: "getStandardFees",
+        productCategory,
+        model,
+        sessionId,
+      });
+      return { success: true, data: result.data || result, message: result.message || "標準修理料金を取得しました。" };
+    } catch (error: any) {
+      return { success: false, data: null, message: `Failed to get standard fees: ${error.message}` };
+    }
+  },
+});
+
+export const searchRepairLogsTool = createTool({
+  id: "searchRepairLogs",
+  description: "Search recent repair logs for a given customer/product",
+  inputSchema: z.object({
+    customerId: z.string().describe("Customer ID"),
+    productId: z.string().optional().describe("Product ID"),
+    limit: z.number().optional().default(5).describe("Max number of logs"),
+    sessionId: z.string().describe("Session ID for validation"),
+  }),
+  outputSchema: z.object({
+    success: z.boolean(),
+    data: z.any(),
+    message: z.string(),
+  }),
+  execute: async ({ context }: { context: any }) => {
+    const { customerId, productId, limit = 5, sessionId } = context;
+    try {
+      const result = await zapierCall("Repair", {
+        action: "searchLogs",
+        customerId,
+        productId,
+        limit,
+        sessionId,
+      });
+      return { success: true, data: result.data || result, message: result.message || "修理履歴を取得しました。" };
+    } catch (error: any) {
+      return { success: false, data: null, message: `Failed to search repair logs: ${error.message}` };
+    }
+  },
+});
 export const createProductTool = createTool({
   id: "createProduct",
   description: "Create a new product record in the Sanden repair system",
@@ -113,7 +183,7 @@ export const createProductTool = createTool({
     data: z.any(),
     message: z.string(),
   }),
-  execute: async ({ context }) => {
+  execute: async ({ context }: { context: any }) => {
     const { productData, sessionId } = context;
 
     try {
@@ -156,7 +226,7 @@ export const updateProductTool = createTool({
     data: z.any(),
     message: z.string(),
   }),
-  execute: async ({ context }) => {
+  execute: async ({ context }: { context: any }) => {
     const { productId, updates, sessionId } = context;
 
     try {
@@ -185,41 +255,18 @@ async function searchProducts(
   query: string,
   category?: string
 ) {
-  // Send to Zapier webhook for product search
   try {
-    const webhookUrl = process.env.ZAPIER_WEBHOOK_URL;
-    if (!webhookUrl) {
-      throw new Error("ZAPIER_WEBHOOK_URL not configured");
-    }
-
-    const response = await fetch(webhookUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        event: "Repair",
-        payload: {
-          query,
-          category,
-          sessionId,
-        },
-        timestamp: new Date().toISOString(),
-      }),
+    const results = await zapierMcp.callTool("google_sheets_lookup_spreadsheet_rows_advanced", {
+      instructions: "製品検索 (partial match app-side)",
+      worksheet: "Products",
+      lookup_key: "製品カテゴリ",
+      lookup_value: category || "",
     });
-
-    if (!response.ok) {
-      throw new Error(
-        `Zapier webhook failed: ${response.status} ${response.statusText}`
-      );
-    }
-
-    const result = await response.json();
-    return {
-      success: true,
-      data: result.data || [],
-      message: result.message || "製品検索が完了しました。",
-    };
+    const rows = (results?.results as any[]) || [];
+    const filtered = rows.filter((r: any) =>
+      JSON.stringify(r).includes(query)
+    );
+    return { success: true, data: filtered, message: "製品検索が完了しました。" };
   } catch (error: any) {
     return {
       success: false,
@@ -230,33 +277,11 @@ async function searchProducts(
 }
 
 async function zapierCall(event: string, payload: Record<string, any>) {
-  const webhookUrl = process.env.ZAPIER_WEBHOOK_URL;
-  if (!webhookUrl) {
-    throw new Error("ZAPIER_WEBHOOK_URL not configured");
-  }
-
-  const response = await fetch(webhookUrl, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      event,
-      payload,
-      timestamp: new Date().toISOString(),
-    }),
+  const result = await zapierMcp.callTool("google_sheets_get_many_spreadsheet_rows_advanced", {
+    instructions: event,
+    row_count: 20,
   });
-
-  if (!response.ok) {
-    throw new Error(
-      `Zapier webhook failed: ${response.status} ${response.statusText}`
-    );
-  }
-
-  const result = await response.json();
-  return {
-    success: true,
-    data: result.data || result,
-    message: result.message || "Zapier call completed successfully",
-  };
+  return { success: true, data: result?.results || result, message: "Zapier MCP call completed successfully" };
 }
 
 // Export all product tools
@@ -265,4 +290,7 @@ export const productTools = {
   getProductsByCustomerIdTool,
   createProductTool,
   updateProductTool,
+  checkWarrantyStatusTool,
+  getStandardRepairFeesTool,
+  searchRepairLogsTool,
 };

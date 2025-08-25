@@ -189,8 +189,77 @@ export class LangfuseIntegration {
     }
   }
 
+  // Add missing methods for orchestrator tools compatibility
+  async startTrace(name: string, metadata?: any): Promise<string | null> {
+    try {
+      // Create a proper Langfuse trace
+      const trace = await this.langfuseTracing.trace({
+        name,
+        metadata,
+      });
+      console.log(`[Langfuse] Trace started: ${trace.id} for ${name}`);
+      return trace.id;
+    } catch (error) {
+      console.error(`[Langfuse] Error starting trace:`, error);
+      // Fallback to local trace ID
+      const traceId = `trace_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      console.log(`[Langfuse] Using fallback trace ID: ${traceId}`);
+      return traceId;
+    }
+  }
+
+  async logToolExecution(
+    traceId: string | null,
+    toolName: string,
+    input: any,
+    output: any,
+    metadata?: any
+  ): Promise<void> {
+    try {
+      if (traceId && traceId.startsWith('trace_')) {
+        // This is a fallback trace ID, just log locally
+        console.log(`[Langfuse] Tool execution (fallback): ${toolName}`, { input, output, metadata });
+        return;
+      }
+      
+      // Use proper Langfuse tracing
+      await this.langfuseTracing.trace({
+        name: `tool:${toolName}`,
+        input,
+        output,
+        metadata: { traceId, ...metadata },
+      });
+      console.log(`[Langfuse] Tool execution logged: ${toolName}`);
+    } catch (error) {
+      console.error(`[Langfuse] Error logging tool execution:`, error);
+    }
+  }
+
+  async endTrace(traceId: string | null, finalMetadata?: any): Promise<void> {
+    try {
+      if (traceId && traceId.startsWith('trace_')) {
+        // This is a fallback trace ID, just log locally
+        console.log(`[Langfuse] Trace ended (fallback): ${traceId}`);
+        return;
+      }
+      
+      // Use proper Langfuse tracing to end the trace
+      await this.langfuseTracing.trace({
+        name: "trace_end",
+        input: { traceId },
+        output: finalMetadata,
+      });
+      console.log(`[Langfuse] Trace ended: ${traceId}`);
+    } catch (error) {
+      console.error(`[Langfuse] Error ending trace:`, error);
+    }
+  }
+
   // Get the tracing instance for external use
   getTracingInstance(): Langfuse {
     return this.langfuseTracing;
   }
 }
+
+// Export singleton instance
+export const langfuse = new LangfuseIntegration();

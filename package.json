@@ -23,22 +23,26 @@
   },
   "dependencies": {
     "@ai-sdk/amazon-bedrock": "^2.2.12",
-    "@langtrase/typescript-sdk": "^6.3.7",
     "@mastra/client-js": "^0.10.21",
     "@mastra/core": "^0.13.2",
     "@mastra/libsql": "^0.13.2",
     "@mastra/loggers": "^0.10.6",
     "@mastra/memory": "^0.12.2",
     "@mastra/server": "^0.13.2",
+    "@modelcontextprotocol/sdk": "^1.17.3",
     "ai": "^5.0.16",
-    "langfuse": "^2.0.0",
+    "dotenv": "^17.2.1",
+    "eventsource": "^4.0.0",
+    "langfuse": "2.8.0",
     "pm2": "^6.0.8",
     "uuid": "^9.0.1",
+    "ws": "^8.18.3",
     "zod": "^3.25.76"
   },
   "devDependencies": {
     "@types/node": "^24.3.0",
     "@types/uuid": "^9.0.8",
+    "@types/ws": "^8.18.1",
     "mastra": "^0.10.21",
     "typescript": "^5.9.2"
   }

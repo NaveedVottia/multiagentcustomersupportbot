@@ -3,14 +3,17 @@ import { Memory } from "@mastra/memory";
 import { bedrock } from "@ai-sdk/amazon-bedrock";
 import { customerTools } from "../../tools/sanden/customer-tools";
 import { commonTools } from "../../tools/sanden/common-tools";
+import { loadLangfusePrompt } from "../../prompts/langfuse";
+
+
+// Resolve instructions at module-load time to avoid mutating read-only properties
+const lfci = await loadLangfusePrompt("routing-agent-customer-identification", { label: "production" });
+const CUSTOMER_IDENTIFICATION_INSTRUCTIONS = lfci?.trim() || "";
 
 export const routingAgentCustomerIdentification = new Agent({ 
   name: "routing-agent-customer-identification",
   description: "サンデン・リテールシステム修理受付AI , 顧客識別エージェント",
-   
-  // All prompts will be provided by Langfuse
-  instructions: "This agent follows instructions provided by Langfuse prompts. No hardcoded instructions.",
-  
+  instructions: CUSTOMER_IDENTIFICATION_INSTRUCTIONS,
   model: bedrock("anthropic.claude-3-5-sonnet-20240620-v1:0"),
   tools: {
     ...customerTools,

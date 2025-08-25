@@ -1,0 +1,52 @@
+Customers
+顧客ID	会社名	メールアドレス	電話番号	所在地
+CUST001	ファミリーマート お台場店	contact@fam-odaiba.jp	03-1234-5678	東京都・お台場
+CUST002	ドン・キホーテ 渋谷店	repair@donki-shibuya.jp	03-8765-4321	東京都・渋谷
+CUST003	ウエルシア 川崎駅前店	support@welcia-k.jp	044-1122-3344	神奈川県・川崎
+CUST004	セブンイレブン 秋葉原店	support@7aki.jp	03-3322-4455	東京都・秋葉原
+CUST005	ローソン 札幌駅前店	lawson-support@sapporo.jp	011-222-3333	北海道・札幌
+CUST006	イオンモール 津田沼店	info@aeon-tsudanuma.jp	047-334-5566	千葉県・津田沼
+CUST007	ヤマダ電機 梅田本店	help@yamada-umeda.jp	06-7890-1234	大阪府・梅田
+CUST008	マツモトキヨシ 千葉中央店	repairs@mk-chiba.jp	043-223-1122	千葉県・千葉中央
+CUST009	ココカラファイン 横浜西口店	service@coco-yokohama.jp	045-998-7766	神奈川県・横浜
+CUST010	デイリーヤマザキ 京都駅前店	yamazaki@kyoto.jp	075-777-8899	京都府・京都駅
+
+Products
+製品ID	顧客ID	製品カテゴリ	型式	シリアル番号	保証状況
+PROD001	CUST001	コーヒーマシン	CM-400F	SN400123	有効
+PROD002	CUST002	自動販売機	VM-230J	SN230999	保証切れ
+PROD003	CUST003	冷蔵ショーケース	RS-1020K	SN102077	有効
+PROD004	CUST004	自動販売機	VM-300X	SN300456	有効
+PROD005	CUST005	コーヒーマシン	CM-500G	SN500888	有効
+PROD006	CUST006	冷蔵ショーケース	RS-1030L	SN103045	保証切れ
+PROD007	CUST007	スナック販売機	SVM-180A	SNS180001	有効
+PROD008	CUST008	アイスクリームディスペンサー	IC-777	SNIC77777	有効
+PROD009	CUST009	ホットドリンクディスペンサー	HBD-90B	SNHBD123	保証切れ
+PROD010	CUST010	小型自販機	CVU-45T	SNCVU009	有効
+
+repairs
+修理ID	日時	製品ID	顧客ID	問題内容	ステータス	訪問要否	優先度	対応者
+REP100	2025-08-01 0:00	PROD003	CUST001	画面が表示されない画面が表示されない	解決済み	Yes	高	AI
+REP101	2025-08-02 00:00	PROD003	CUST003	コインが詰まる	未対応	要	中	渡辺
+REP102	2025-08-03 00:00	PROD001	CUST002	コインが詰まる	未対応	要	中	山本
+REP103	2025-08-04 00:00	PROD002	CUST003	水漏れがある	解決済み	不要	低	田中
+REP104	2025-08-05 00:00	PROD002	CUST003	コインが詰まる	解決済み	不要	低	渡辺
+REP105	2025-08-06 00:00	PROD003	CUST003	水漏れがある	対応中	要	低	鈴木
+REP106	2025-08-07 00:00	PROD003	CUST001	冷却が機能しない	対応中	要	高	山本
+REP107	2025-08-08 00:00	PROD003	CUST001	水漏れがある	解決済み	不要	中	佐藤
+REP108	2025-08-09 00:00	PROD002	CUST002	画面が表示されない	対応中	要	高	佐藤
+REP109	2025-08-10 00:00	PROD002	CUST001	画面が表示されない	対応中	要	低	山本
+REP110	2025-08-11 00:00	PROD003	CUST002	冷却が機能しない	対応中	要	高	渡辺
+REP111	2025-08-12 00:00	PROD003	CUST002	画面が表示されない	対応中	要	低	田中
+REP112	2025-08-13 00:00	PROD001	CUST001	コインが詰まる	未対応	不要	低	田中
+REP113	2025-08-14 00:00	PROD001	CUST002	冷却が機能しない	解決済み	要	中	山本
+REP114	2025-08-15 00:00	PROD001	CUST003	コーヒーが出ない	未対応	要	低	佐藤
+REP115	2025-08-16 00:00	PROD003	CUST001	画面が表示されない	解決済み	要	中	田中
+REP116	2025-08-17 00:00	PROD002	CUST002	水漏れがある	解決済み	要	高	田中
+REP117	2025-08-18 00:00	PROD001	CUST003	画面が表示されない	対応中	要	高	佐藤
+REP118	2025-08-19 00:00	PROD002	CUST002	冷却が機能しない	未対応	要	中	渡辺
+REP118	2025-08-20 00:00	PROD002	CUST002	冷却が機能しない	未対応	要	高	佐藤
+REP100	08/12/25 8:13 PM	PROD001	CUST001	テスト更新	未対応	要	高	佐藤
+
+Logs  
+Timestamp	Repair ID	Status	Customer ID	Product ID	担当者 (Handler)	Issue	Source	Raw																	

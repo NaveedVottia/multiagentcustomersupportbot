@@ -53,14 +53,14 @@ const externalApiStreamStep = createStep({
     issueData: StreamingContextSchema.shape.issueData.optional(),
     nextStep: z.string().optional(),
   }),
-  execute: async ({ inputData }) => {
+  execute: async ({ inputData }: { inputData: any }) => {
     const { userInput, sessionId, currentContext } = inputData;
     const sessionIdValue = sessionId || `session-${Date.now()}`;
     let currentContextValue = currentContext || { sessionId: sessionIdValue };
 
     try {
       // Connect to external API streaming endpoint
-      const externalApiUrl = "http://54.150.79.178/api/workflows/repair-intake/stream";
+      const externalApiUrl = "https://mastra.demo.dev-maestra.vottia.me/api/agents/repair-workflow-orchestrator/stream";
       
       console.log(`🔄 Connecting to external API: ${externalApiUrl}`);
       console.log(`📝 User Input: ${userInput}`);
@@ -74,63 +74,52 @@ const externalApiStreamStep = createStep({
         timestamp: new Date().toISOString(),
       };
 
-      // Make the request to the external API
-      const response = await fetch(externalApiUrl, {
+      // Make the request to the external API using SSE-compatible headers and payload
+      const sseResponse = await fetch(externalApiUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "Accept": "application/json",
+          "Accept": "text/plain",
         },
-        body: JSON.stringify(requestPayload),
+        body: JSON.stringify({
+          messages: [
+            { role: "user", content: userInput },
+          ],
+        }),
       });
 
-      if (!response.ok) {
-        throw new Error(`External API request failed: ${response.status} ${response.statusText}`);
+      if (!sseResponse.ok) {
+        throw new Error(`External API request failed: ${sseResponse.status} ${sseResponse.statusText}`);
       }
 
-      const responseData = await response.json();
-      console.log("✅ External API Response:", responseData);
+      // Read a small portion of the stream to surface initial feedback to the workflow
+      let aggregatedText = "";
+      try {
+        const reader = (sseResponse.body as any)?.getReader?.();
+        if (reader) {
+          const decoder = new TextDecoder();
+          const startTime = Date.now();
+          while (Date.now() - startTime < 1500) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            aggregatedText += decoder.decode(value, { stream: true });
+            if (aggregatedText.length > 4000) break; // cap
+          }
+          try { await reader.cancel(); } catch {}
+        } else {
+          aggregatedText = await sseResponse.text();
+        }
+      } catch {}
 
-      // Process the response and determine next steps
-      if (responseData.status === "emergency") {
-        return {
-          userInput,
-          sessionId: sessionIdValue,
-          currentContext: currentContextValue,
-          status: "emergency_escalated" as const,
-        };
-      } else if (responseData.status === "completed") {
-        return {
-          userInput,
-          sessionId: sessionIdValue,
-          currentContext: currentContextValue,
-          status: "completed" as const,
-          customerData: responseData.customerData,
-          productData: responseData.productData,
-          issueData: responseData.issueData,
-        };
-      } else if (responseData.status === "streaming") {
-        // Handle streaming response - continue to next step
-        return {
-          userInput,
-          sessionId: sessionIdValue,
-          currentContext: currentContextValue,
-          status: "streaming" as const,
-          streamData: responseData.streamData,
-          customerData: responseData.customerData,
-          productData: responseData.productData,
-          issueData: responseData.issueData,
-          nextStep: responseData.nextStep || "orchestrator",
-        };
-      } else {
-        // Handle error cases
-        return {
-          userInput,
-          sessionId: sessionIdValue,
-          currentContext: currentContextValue,
-          status: "error_escalated" as const,
-        };
-      }
+      // Continue workflow; pass the partial stream text forward
+      return {
+        userInput,
+        sessionId: sessionIdValue,
+        currentContext: currentContextValue,
+        status: "streaming" as const,
+        streamData: aggregatedText || "",
+        nextStep: "orchestrator",
+      };
 
     } catch (error: any) {
       console.error("❌ External API streaming error:", error);
@@ -186,7 +175,7 @@ const orchestratorStep = createStep({
     workflowDuration: z.number(),
     nextAgent: z.string().optional(),
   }),
-  execute: async ({ inputData }) => {
+  execute: async ({ inputData }: { inputData: any }) => {
     const { userInput, sessionId, currentContext, streamData, status, customerData, productData, issueData } = inputData;
     let currentContextValue = currentContext || { sessionId };
 
