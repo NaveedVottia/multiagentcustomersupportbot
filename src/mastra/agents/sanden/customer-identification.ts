@@ -3,6 +3,7 @@ import { Memory } from "@mastra/memory";
 import { bedrock } from "@ai-sdk/amazon-bedrock";
 import { customerTools } from "../../tools/sanden/customer-tools";
 import { commonTools } from "../../tools/sanden/common-tools";
+import { orchestratorTools } from "../../tools/sanden/orchestrator-tools";
 import { loadLangfusePrompt } from "../../prompts/langfuse";
 
 
@@ -18,6 +19,7 @@ export const routingAgentCustomerIdentification = new Agent({
   tools: {
     ...customerTools,
     ...commonTools,
+    ...orchestratorTools,
   },
   memory: new Memory(),
 });
