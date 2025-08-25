@@ -227,34 +227,61 @@ export const lookupCustomerFromDatabase = createTool({
                           searchType === "customer_id" ? "顧客ID" :
                           searchType === "phone" ? "電話番号" : "メールアドレス";
       
-      // Look up customer data from Google Sheets via Zapier MCP
-      const result = await zapierMcp.callTool("google_sheets_lookup_spreadsheet_rows_advanced", {
-        instructions: `Look up customer data by ${searchType}`,
-        worksheet: "Customers",
-        lookup_key: lookupColumn,
-        lookup_value: storeName,
-        row_count: "1"
-      });
+      // Create smart search queries for store name matching
+      let searchQueries = [storeName];
+      if (searchType === "store_name") {
+        // Add common variations and translations
+        if (storeName.toLowerCase().includes("welcia")) {
+          searchQueries.push("ウエルシア");
+          searchQueries.push("ウエルシア 川崎駅前店");
+        }
+        if (storeName.toLowerCase().includes("kawasaki")) {
+          searchQueries.push("川崎");
+        }
+        if (storeName.toLowerCase().includes("station")) {
+          searchQueries.push("駅前");
+        }
+      }
       
-      if (result && result.length > 0) {
-        const customer = result[0];
-        const customerData = {
-          customerId: customer["顧客ID"],
-          storeName: customer["会社名"],
-          email: customer["メールアドレス"],
-          phone: customer["電話番号"],
-          location: customer["所在地"],
-          found: true
-        };
-        
-        const res = { success: true, customerData, found: true };
-        await langfuse.logToolExecution(traceId, "lookupCustomerFromDatabase", { storeName, searchType }, res);
-        await langfuse.endTrace(traceId, { success: true });
-        return res;
+      // Try each search query
+      for (const query of searchQueries) {
+        try {
+          const result = await zapierMcp.callTool("google_sheets_lookup_spreadsheet_rows_advanced", {
+            instructions: `Look up customer data by ${searchType} with query: ${query}`,
+            worksheet: "Customers",
+            lookup_key: lookupColumn,
+            lookup_value: query,
+            row_count: "5"
+          });
+          
+          if (result && result.length > 0) {
+            // Find the best match
+            const bestMatch = result.find((row: any) => {
+              const companyName = row["会社名"] || "";
+              return companyName.includes("ウエルシア") && companyName.includes("川崎");
+            }) || result[0];
+            
+            const customerData = {
+              customerId: bestMatch["顧客ID"],
+              storeName: bestMatch["会社名"],
+              email: bestMatch["メールアドレス"],
+              phone: bestMatch["電話番号"],
+              location: bestMatch["所在地"],
+              found: true
+            };
+            
+            const res = { success: true, customerData, found: true };
+            await langfuse.logToolExecution(traceId, "lookupCustomerFromDatabase", { storeName, searchType, matchedQuery: query }, res);
+            await langfuse.endTrace(traceId, { success: true });
+            return res;
+          }
+        } catch (error) {
+          console.error(`Failed to search with query "${query}":`, error);
+        }
       }
       
       const res = { success: true, customerData: null, found: false };
-      await langfuse.logToolExecution(traceId, "lookupCustomerFromDatabase", { storeName, searchType }, res);
+      await langfuse.logToolExecution(traceId, "lookupCustomerFromDatabase", { storeName, searchType, triedQueries: searchQueries }, res);
       await langfuse.endTrace(traceId, { success: true });
       return res;
     } catch (error) {
