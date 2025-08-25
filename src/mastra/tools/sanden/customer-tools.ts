@@ -31,13 +31,23 @@ function mapLookupKey(worksheet: string, key: string): string {
 }
 
 async function mcpLookupRows(worksheet: string, lookup_key: string, lookup_value: string) {
-  const key = mapLookupKey(worksheet, lookup_key);
-  return zapierMcp.callTool("google_sheets_lookup_spreadsheet_rows_advanced", {
-    instructions: `lookup ${lookup_key}`,
-    worksheet,
-    lookup_key: key,
-    lookup_value,
-  });
+  try {
+    const key = mapLookupKey(worksheet, lookup_key);
+    console.log(`[MCP] Looking up ${worksheet} with key ${key} and value ${lookup_value}`);
+    
+    const result = await zapierMcp.callTool("google_sheets_lookup_spreadsheet_rows_advanced", {
+      instructions: `lookup ${lookup_key}`,
+      worksheet,
+      lookup_key: key,
+      lookup_value,
+    });
+    
+    console.log(`[MCP] Lookup result:`, result);
+    return result;
+  } catch (error) {
+    console.error(`[MCP] Lookup failed for ${worksheet}/${lookup_key}/${lookup_value}:`, error);
+    return null;
+  }
 }
 
 // Online validation functions that call external APIs
