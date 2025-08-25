@@ -99,6 +99,26 @@ export const delegateTo = createTool({
           if (instance?.tools?.logCustomerData) {
             await instance.tools.logCustomerData.execute({ customerData: extractedData, source: "customer-identification" });
           }
+          
+          // Also try to look up real customer data from database if store name is mentioned
+          if (extractedData.storeName || extractedData.name) {
+            try {
+              if (instance?.tools?.lookupCustomerFromDatabase) {
+                const lookupResult = await instance.tools.lookupCustomerFromDatabase.execute({ 
+                  storeName: extractedData.storeName || extractedData.name,
+                  searchType: "store_name"
+                });
+                
+                if (lookupResult.found && lookupResult.customerData) {
+                  console.log("Found real customer data from database:", lookupResult.customerData);
+                  // Replace the fake data with real data
+                  extractedData = { ...extractedData, ...lookupResult.customerData };
+                }
+              }
+            } catch (error) {
+              console.error("Failed to lookup customer data from database:", error);
+            }
+          }
         } catch (error) {
           console.error("Failed to auto-log customer data:", error);
         }
