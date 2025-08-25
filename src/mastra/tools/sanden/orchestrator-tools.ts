@@ -91,6 +91,19 @@ export const delegateTo = createTool({
       else if (agentId === "repair-agent-product-selection") extractedData = extractDataFromResponse(fullResponse, "PRODUCT");
       else if (agentId === "repair-qa-agent-issue-analysis") extractedData = extractDataFromResponse(fullResponse, "ISSUE");
       else if (agentId === "repair-visit-confirmation-agent") extractedData = extractDataFromResponse(fullResponse, "REPAIR");
+      
+      // Automatically log customer data when extracted
+      if (extractedData && agentId === "routing-agent-customer-identification") {
+        try {
+          const instance = (mastra as any) || mastraInstance;
+          if (instance?.tools?.logCustomerData) {
+            await instance.tools.logCustomerData.execute({ customerData: extractedData, source: "customer-identification" });
+          }
+        } catch (error) {
+          console.error("Failed to auto-log customer data:", error);
+        }
+      }
+      
       await langfuse.logToolExecution(traceId, "delegateTo", { agentId, messageLength: message?.length || 0 }, { ok: true, agentId, extractedData }, { extractedKeys: extractedData ? Object.keys(extractedData) : [] });
       await langfuse.endTrace(traceId, { success: true });
       return { ok: true, agentId, extractedData };
@@ -179,4 +192,45 @@ export const updateWorkflowState = createTool({
   },
 });
 
-export const orchestratorTools = { delegateTo, escalateToHuman, validateContext, updateWorkflowState };
+export const logCustomerData = createTool({
+  id: "logCustomerData",
+  description: "Automatically log extracted customer data to Google Sheets via Zapier MCP",
+  inputSchema: z.object({ customerData: z.record(z.any()), source: z.string().optional() }),
+  outputSchema: z.object({ success: z.boolean(), logId: z.string().optional() }),
+  async execute(args: ToolExecuteArgs) {
+    const { customerData, source } = getArgs(args) as { customerData: any; source?: string };
+    const traceId = await langfuse.startTrace("tool.logCustomerData");
+    
+    try {
+      // Log to Google Sheets via Zapier MCP
+      await zapierMcp.callTool("google_sheets_create_spreadsheet_row", {
+        instructions: "Log customer data extraction",
+        Timestamp: new Date().toISOString(),
+        "Customer ID": customerData.customerId || `CUST-${Date.now()}`,
+        "Store Name": customerData.storeName || customerData.name || "",
+        "Store Code": customerData.storeCode || customerData.code || "",
+        "Address": customerData.address || "",
+        "Phone Number": customerData.phoneNumber || customerData.phone || "",
+        "Email": customerData.email || "",
+        "Source": source || "customer-identification",
+        "Raw Data": JSON.stringify(customerData),
+        "Status": "Identified",
+        "担当者 (Handler)": "AI",
+      });
+      
+      const logId = `LOG-${Date.now()}`;
+      const res = { success: true, logId };
+      await langfuse.logToolExecution(traceId, "logCustomerData", { customerData, source }, res);
+      await langfuse.endTrace(traceId, { success: true });
+      return res;
+    } catch (error) {
+      console.error("Failed to log customer data:", error);
+      const res = { success: false, logId: null };
+      await langfuse.logToolExecution(traceId, "logCustomerData", { customerData, source }, res);
+      await langfuse.endTrace(traceId, { success: false });
+      return res;
+    }
+  },
+});
+
+export const orchestratorTools = { delegateTo, escalateToHuman, validateContext, updateWorkflowState, logCustomerData };

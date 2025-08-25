@@ -10,3 +10,6 @@ nohup: ignoring input
 [32mINFO[39m [2025-08-25 03:11:15.263 +0000] (Sanden Repair System): [36m Mastra API running on port http://localhost:4111/api[39m
 [32mINFO[39m [2025-08-25 03:11:15.270 +0000] (Sanden Repair System): [36m👨‍💻 Playground available at http://localhost:4111[39m
 [Langfuse] ✅ Loaded prompt via SDK: repair-agent-product-selection (v8)
+[Langfuse] Trace started: 92a61e6f-f7ff-40de-9cbf-c6c32a42869c for tool.delegateTo
+[Langfuse] Tool execution logged: delegateTo
+[Langfuse] Trace ended: 92a61e6f-f7ff-40de-9cbf-c6c32a42869c
