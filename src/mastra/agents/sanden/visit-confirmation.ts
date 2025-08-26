@@ -4,6 +4,7 @@ import { bedrock } from "@ai-sdk/amazon-bedrock";
 import { schedulingTools } from "../../tools/sanden/scheduling-tools";
 import { commonTools } from "../../tools/sanden/common-tools";
 import { loadLangfusePrompt } from "../../prompts/langfuse";
+import { langfuse } from "../../../integrations/langfuse";
 
 export const repairVisitConfirmationAgent = new Agent({ 
   name: "repair-visit-confirmation-agent",
@@ -25,5 +26,8 @@ export const repairVisitConfirmationAgent = new Agent({
   try {
     const prompt = await loadLangfusePrompt("repair-visit-confirmation-agent", { label: "production" });
     (repairVisitConfirmationAgent as any).instructions = prompt;
+    try {
+      await langfuse.logPrompt("repair-visit-confirmation-agent", { label: "production", agentId: "repair-visit-confirmation-agent" }, prompt, { length: prompt?.length || 0 });
+    } catch {}
   } catch {}
 })();

@@ -69,16 +69,13 @@ export const delegateTo = createTool({
         { role: "system", content: `Context: ${JSON.stringify(agentContext || {})}` },
         { role: "user", content: message },
       ];
-      const stream = agent.streamVNext ? await agent.streamVNext(messages) : await agent.stream(messages);
+      const stream = await agent.stream(messages);
       let fullResponse = "";
       if (stream) {
-        for await (const chunk of stream as any) {
+        for await (const chunk of stream.textStream) {
           // SANITIZE CHUNKS BEFORE WRITING TO UI
           let sanitizedChunk = chunk;
-          if ((chunk as any).text) {
-            sanitizedChunk = { ...chunk, text: sanitizeResponse((chunk as any).text) };
-            fullResponse += (chunk as any).text; // Keep original for data extraction
-          } else if (typeof chunk === "string") {
+          if (typeof chunk === "string") {
             sanitizedChunk = sanitizeResponse(chunk);
             fullResponse += chunk; // Keep original for data extraction
           }

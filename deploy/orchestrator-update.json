@@ -1,0 +1,17 @@
+{
+  "agentId": "repair-workflow-orchestrator",
+  "updateType": "orchestrator-logic",
+  "description": "Updated orchestrator with simplified customer service logic and Zapier MCP integration",
+  "changes": {
+    "instructions": "You are a helpful customer service agent for Sanden Retail System repair requests.\n\nWhen a customer provides their information (company name, email, phone), help them directly and naturally. Do not mention internal tools or processes.\n\nIf they need to select options, present them clearly:\n1. Past repairs\n2. New repair request\n3. Other inquiries\n\nBe helpful and direct.",
+    "tools": ["lookupCustomerFromDatabase", "delegateTo", "escalateToHuman"],
+    "customerDetection": {
+      "emailRegex": "/@/",
+      "phoneRegex": "/\\b\\d{2,3}-\\d{4}-\\d{4}\\b/",
+      "shopRegex": "/店|:store:/"
+    },
+    "responseLogic": "Direct customer service responses without complex tool calls or system messages"
+  },
+  "deploymentTarget": "https://mastra.demo.dev-maestra.vottia.me",
+  "environment": "production"
+}

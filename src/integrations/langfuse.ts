@@ -1,31 +1,35 @@
 import { Langfuse } from "langfuse";
 
 export class LangfuseIntegration {
-  private langfuse: Langfuse;
-  private langfuseTracing: Langfuse;
+  private langfuse: Langfuse | null = null;
+  private langfuseTracing: Langfuse | null = null;
+  private enabled: boolean = false;
 
   constructor() {
+    this.tryInitFromEnv();
+  }
+
+  private tryInitFromEnv(): void {
+    if (this.enabled && this.langfuse && this.langfuseTracing) return;
     const host = process.env.LANGFUSE_HOST || "https://langfuse.demo.dev-maestra.vottia.me";
     const publicKey = process.env.LANGFUSE_PUBLIC_KEY;
     const secretKey = process.env.LANGFUSE_SECRET_KEY;
-
     if (!publicKey || !secretKey) {
-      throw new Error("LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY must be set");
+      if (!this.enabled) {
+        console.warn("[Langfuse] Keys missing. Running in fallback mode with no-op tracing and empty prompts.");
+      }
+      this.enabled = false;
+      return;
     }
-
-    // Main Langfuse instance for prompts
-    this.langfuse = new Langfuse({
-      publicKey,
-      secretKey,
-      baseUrl: host,
-    });
-
-    // Separate Langfuse instance for tracing (reuse same keys)
-    this.langfuseTracing = new Langfuse({
-      publicKey,
-      secretKey,
-      baseUrl: host,
-    });
+    try {
+      this.langfuse = new Langfuse({ publicKey, secretKey, baseUrl: host });
+      this.langfuseTracing = new Langfuse({ publicKey, secretKey, baseUrl: host });
+      this.enabled = true;
+      console.log("[Langfuse] Initialized from environment.");
+    } catch (e) {
+      console.error("[Langfuse] Initialization error:", e);
+      this.enabled = false;
+    }
   }
 
   // Strict, label-aware prompt fetcher. No fallbacks, throws if not found.
@@ -34,9 +38,12 @@ export class LangfuseIntegration {
     label: string = "production"
   ): Promise<string> {
     try {
-      console.log(
-        `[Langfuse] Attempting to fetch prompt: ${promptName} with label: ${label}`
-      );
+      this.tryInitFromEnv();
+      if (!this.enabled || !this.langfuse) {
+        console.warn(`[Langfuse] Disabled. Returning empty prompt for ${promptName}@${label}`);
+        return "";
+      }
+      console.log(`[Langfuse] Attempting to fetch prompt: ${promptName} with label: ${label}`);
 
       // Try different possible method names for the Langfuse SDK
       let response;
@@ -133,7 +140,8 @@ export class LangfuseIntegration {
         `[Langfuse] Error fetching prompt "${promptName}":`,
         errorMessage
       );
-      throw new Error(`Failed to fetch Langfuse prompt: ${errorMessage}`);
+      // Fallback to empty string to allow continuation
+      return "";
     }
   }
 
@@ -144,7 +152,8 @@ export class LangfuseIntegration {
     metadata?: any
   ): Promise<void> {
     try {
-      // Use the tracing instance for logging prompts
+      this.tryInitFromEnv();
+      if (!this.enabled || !this.langfuseTracing) return;
       await this.langfuseTracing.trace({
         name: promptName,
         input,
@@ -164,6 +173,8 @@ export class LangfuseIntegration {
   // Test connection method using SDK
   async testConnection(): Promise<boolean> {
     try {
+      this.tryInitFromEnv();
+      if (!this.enabled || !this.langfuse || !this.langfuseTracing) return false;
       // Test both connections
       console.log(`[Langfuse] Testing prompt connection...`);
       await this.langfuse.trace({
@@ -192,7 +203,12 @@ export class LangfuseIntegration {
   // Add missing methods for orchestrator tools compatibility
   async startTrace(name: string, metadata?: any): Promise<string | null> {
     try {
-      // Create a proper Langfuse trace
+      this.tryInitFromEnv();
+      if (!this.enabled || !this.langfuseTracing) {
+        const fallback = `trace_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+        console.log(`[Langfuse] Fallback trace started: ${fallback}`);
+        return fallback;
+      }
       const trace = await this.langfuseTracing.trace({
         name,
         metadata,
@@ -201,7 +217,6 @@ export class LangfuseIntegration {
       return trace.id;
     } catch (error) {
       console.error(`[Langfuse] Error starting trace:`, error);
-      // Fallback to local trace ID
       const traceId = `trace_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
       console.log(`[Langfuse] Using fallback trace ID: ${traceId}`);
       return traceId;
@@ -216,7 +231,8 @@ export class LangfuseIntegration {
     metadata?: any
   ): Promise<void> {
     try {
-      if (traceId && traceId.startsWith('trace_')) {
+      this.tryInitFromEnv();
+      if (!this.enabled || !this.langfuseTracing || (traceId && traceId.startsWith('trace_'))) {
         // This is a fallback trace ID, just log locally
         console.log(`[Langfuse] Tool execution (fallback): ${toolName}`, { input, output, metadata });
         return;
@@ -237,7 +253,8 @@ export class LangfuseIntegration {
 
   async endTrace(traceId: string | null, finalMetadata?: any): Promise<void> {
     try {
-      if (traceId && traceId.startsWith('trace_')) {
+      this.tryInitFromEnv();
+      if (!this.enabled || !this.langfuseTracing || (traceId && traceId.startsWith('trace_'))) {
         // This is a fallback trace ID, just log locally
         console.log(`[Langfuse] Trace ended (fallback): ${traceId}`);
         return;
@@ -256,7 +273,8 @@ export class LangfuseIntegration {
   }
 
   // Get the tracing instance for external use
-  getTracingInstance(): Langfuse {
+  getTracingInstance(): Langfuse | null {
+    this.tryInitFromEnv();
     return this.langfuseTracing;
   }
 }

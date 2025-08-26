@@ -5,11 +5,19 @@ import { customerTools } from "../../tools/sanden/customer-tools";
 import { commonTools } from "../../tools/sanden/common-tools";
 import { orchestratorTools } from "../../tools/sanden/orchestrator-tools";
 import { loadLangfusePrompt } from "../../prompts/langfuse";
+import { langfuse } from "../../../integrations/langfuse";
 
-
-// Resolve instructions at module-load time to avoid mutating read-only properties
+// Load Langfuse prompt only
 const lfci = await loadLangfusePrompt("routing-agent-customer-identification", { label: "production" });
 const CUSTOMER_IDENTIFICATION_INSTRUCTIONS = lfci?.trim() || "";
+
+// Debug logging
+console.log("🔍 Customer Identification Agent Instructions:");
+console.log("📝 Langfuse Instructions Length:", CUSTOMER_IDENTIFICATION_INSTRUCTIONS.length);
+console.log("📝 Using Langfuse:", CUSTOMER_IDENTIFICATION_INSTRUCTIONS ? "YES" : "NO (empty)");
+if (CUSTOMER_IDENTIFICATION_INSTRUCTIONS) {
+  console.log("📝 Instructions Preview:", CUSTOMER_IDENTIFICATION_INSTRUCTIONS.substring(0, 200) + "...");
+}
 
 export const routingAgentCustomerIdentification = new Agent({ 
   name: "routing-agent-customer-identification",
@@ -23,3 +31,15 @@ export const routingAgentCustomerIdentification = new Agent({
   },
   memory: new Memory(),
 });
+
+console.log("✅ Customer Identification Agent created with instructions length:", CUSTOMER_IDENTIFICATION_INSTRUCTIONS.length);
+
+// Log prompt to Langfuse tracing
+try {
+  await langfuse.logPrompt(
+    "routing-agent-customer-identification",
+    { label: "production", agentId: "routing-agent-customer-identification" },
+    CUSTOMER_IDENTIFICATION_INSTRUCTIONS,
+    { length: CUSTOMER_IDENTIFICATION_INSTRUCTIONS.length }
+  );
+} catch {}

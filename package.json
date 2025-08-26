@@ -5,9 +5,9 @@
   "main": "dist/index.js",
   "type": "module",
   "scripts": {
-    "dev": "mastra dev",
-    "build": "mastra build",
-    "start": "mastra start",
+    "dev": "tsx watch src/mastra-server.ts",
+    "build": "tsc",
+    "start": "node dist/mastra-server.js",
     "deploy": "bash scripts/deploy-lightsail.sh"
   },
   "keywords": [
@@ -24,15 +24,17 @@
   "dependencies": {
     "@ai-sdk/amazon-bedrock": "^2.2.12",
     "@mastra/client-js": "^0.10.21",
-    "@mastra/core": "^0.13.2",
-    "@mastra/libsql": "^0.13.2",
+    "@mastra/core": "^0.14.1",
+    "@mastra/libsql": "^0.13.4",
     "@mastra/loggers": "^0.10.6",
-    "@mastra/memory": "^0.12.2",
-    "@mastra/server": "^0.13.2",
+    "@mastra/memory": "^0.13.1",
+    "@mastra/server": "^0.14.1",
     "@modelcontextprotocol/sdk": "^1.17.3",
     "ai": "^5.0.16",
+    "cors": "^2.8.5",
     "dotenv": "^17.2.1",
     "eventsource": "^4.0.0",
+    "express": "^5.1.0",
     "langfuse": "2.8.0",
     "pm2": "^6.0.8",
     "uuid": "^9.0.1",
@@ -40,10 +42,13 @@
     "zod": "^3.25.76"
   },
   "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.3",
     "@types/node": "^24.3.0",
     "@types/uuid": "^9.0.8",
     "@types/ws": "^8.18.1",
-    "mastra": "^0.10.21",
+    "mastra": "^0.10.23",
+    "tsx": "^4.20.5",
     "typescript": "^5.9.2"
   }
 }

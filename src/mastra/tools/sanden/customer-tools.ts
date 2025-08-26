@@ -30,23 +30,75 @@ function mapLookupKey(worksheet: string, key: string): string {
   return key;
 }
 
+function extractRowsFromZapier(result: any): any[] {
+  if (!result) return [];
+  // Direct rows array
+  if (Array.isArray(result?.rows)) return result.rows;
+  // Results array or object with nested rows
+  if (result?.results) {
+    const out: any[] = [];
+    if (Array.isArray(result.results)) {
+      for (const entry of result.results) {
+        if (Array.isArray(entry?.rows)) out.push(...entry.rows);
+        else if (entry) out.push(entry);
+      }
+    } else if (typeof result.results === "object") {
+      for (const key of Object.keys(result.results)) {
+        if (!/^\d+$/.test(key)) continue;
+        const value = (result.results as any)[key];
+        if (Array.isArray(value?.rows)) out.push(...value.rows);
+        else if (Array.isArray(value)) out.push(...value);
+        else if (value) out.push(value);
+      }
+    }
+    if (out.length) return out;
+  }
+  // Numeric keyed object: { "0": { rows: [...] }, ... }
+  if (typeof result === "object") {
+    const out: any[] = [];
+    for (const key of Object.keys(result)) {
+      if (!/^\d+$/.test(key)) continue;
+      const value = (result as any)[key];
+      if (Array.isArray(value?.rows)) out.push(...value.rows);
+      else if (Array.isArray(value)) out.push(...value);
+      else if (value) out.push(value);
+    }
+    if (out.length) return out;
+  }
+  return [];
+}
+
 async function mcpLookupRows(worksheet: string, lookup_key: string, lookup_value: string) {
   try {
     const key = mapLookupKey(worksheet, lookup_key);
-    console.log(`[MCP] Looking up ${worksheet} with key ${key} and value ${lookup_value}`);
-    
+    const normalizedValue = String(lookup_value ?? "").replace(/\s+/g, " ").trim();
+    console.log(`[MCP] Looking up ${worksheet} with key ${key} and value ${normalizedValue}`);
     const result = await zapierMcp.callTool("google_sheets_lookup_spreadsheet_rows_advanced", {
       instructions: `lookup ${lookup_key}`,
       worksheet,
       lookup_key: key,
-      lookup_value,
+      lookup_value: normalizedValue,
     });
-    
-    console.log(`[MCP] Lookup result:`, result);
-    return result;
+    const rows = extractRowsFromZapier(result);
+    console.log(`[MCP] Lookup normalized rows: ${rows.length}`);
+    return rows;
   } catch (error) {
     console.error(`[MCP] Lookup failed for ${worksheet}/${lookup_key}/${lookup_value}:`, error);
-    return null;
+    return [];
+  }
+}
+
+async function mcpListRows(worksheet: string, row_count = 500) {
+  try {
+    const result = await zapierMcp.callTool("google_sheets_get_many_spreadsheet_rows_advanced", {
+      instructions: `${worksheet} list rows`,
+      worksheet,
+      row_count,
+    });
+    return extractRowsFromZapier(result);
+  } catch (error) {
+    console.error(`[MCP] List rows failed for ${worksheet}:`, error);
+    return [];
   }
 }
 
@@ -231,8 +283,7 @@ export const getCustomerHistory = createTool({
   execute: async ({ context, writer }: { context: any; writer?: any }) => {
     const { customerId, sessionId, limit } = context;
     try {
-      const result = await mcpLookupRows("repairs", "顧客ID", customerId);
-      const rows = ((result?.results as any[]) || []).flatMap((r: any) => r?.rows || []);
+      const rows = await mcpLookupRows("repairs", "顧客ID", customerId);
 
       // Normalize and sort (most recent first when possible)
       const items = rows.map((r: any) => ({
@@ -263,7 +314,7 @@ export const getCustomerHistory = createTool({
         customerId,
         limit,
         data: limited,
-        raw: result,
+        raw: rows,
       };
     } catch (error) {
       return {
@@ -277,9 +328,9 @@ export const getCustomerHistory = createTool({
 });
 
 export const customerTools = {
-  searchCustomer: createTool({
-    id: "searchCustomer",
-    description: "Search for customer information in the online database",
+  fuzzySearchCustomers: createTool({
+    id: "fuzzySearchCustomers",
+    description: "Search for customer information in the online database using fuzzy matching",
     inputSchema: z.object({
       query: z
         .string()
@@ -294,27 +345,29 @@ export const customerTools = {
         let merged: any[] = [];
         
         // If query looks like a company name (contains letters), search by company name
-        if (/[a-zA-Z\u3040-\u309F\u30A0-\u30FF\u4E00-\u4E9F]/.test(query)) {
+        if (/[a-zA-Z\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF]/.test(query)) {
           const byCompany = await mcpLookupRows("Customers", "会社名", query);
-          if (byCompany?.results) {
-            merged.push(...byCompany.results);
+          if (byCompany?.length) merged.push(...byCompany);
+          // Retry with whitespace-insensitive variant if needed
+          if (!merged.length) {
+            const qNoSpace = String(query).replace(/\s+/g, "");
+            if (qNoSpace && qNoSpace !== query) {
+              const byCompanyNoSpace = await mcpLookupRows("Customers", "会社名", qNoSpace);
+              if (byCompanyNoSpace?.length) merged.push(...byCompanyNoSpace);
+            }
           }
         }
         
         // If query looks like an email (contains @), search by email
         if (query.includes('@')) {
           const byEmail = await mcpLookupRows("Customers", "メールアドレス", query);
-          if (byEmail?.results) {
-            merged.push(...byEmail.results);
-          }
+          if (byEmail?.length) merged.push(...byEmail);
         }
         
         // If query looks like a phone number (contains only digits and some special chars), search by phone
         if (/^[\d\-\+\(\)\s]+$/.test(query)) {
           const byPhone = await mcpLookupRows("Customers", "電話番号", query);
-          if (byPhone?.results) {
-            merged.push(...byPhone.results);
-          }
+          if (byPhone?.length) merged.push(...byPhone);
         }
         
         // If no exact matches, try smart English-Japanese name mapping
@@ -325,8 +378,8 @@ export const customerTools = {
           for (const smartQuery of smartQueries) {
             try {
               const smartResult = await mcpLookupRows("Customers", "会社名", smartQuery);
-              if (smartResult?.results && smartResult.results.length > 0) {
-                merged = smartResult.results;
+              if (smartResult?.length > 0) {
+                merged = smartResult;
                 break;
               }
             } catch (error) {
@@ -337,17 +390,18 @@ export const customerTools = {
         
         if (!merged.length) {
           // Fallback: scan all rows and do substring match client-side
-          const all = await zapierMcp.callTool("google_sheets_get_many_spreadsheet_rows_advanced", {
-            instructions: "customers fallback scan",
-            worksheet: "Customers",
-            row_count: 500,
-          });
-          const rows = (all?.results as any[]) || [];
+          const rows = await mcpListRows("Customers", 500);
           merged = rows.filter((r: any) => {
-            const name = r?.["COL$B"] || "";
-            const email = r?.["COL$C"] || "";
-            const phone = r?.["COL$D"] || "";
-            return String(name).includes(query) || String(email).includes(query) || String(phone).includes(query);
+            const name = String(r?.["COL$B"] || "");
+            const email = String(r?.["COL$C"] || "");
+            const phone = String(r?.["COL$D"] || "");
+            const q = String(query);
+            const strip = (s: string) => s.replace(/\s+/g, "");
+            return (
+              name.includes(q) || strip(name).includes(strip(q)) ||
+              email.toLowerCase().includes(q.toLowerCase()) ||
+              phone.includes(q)
+            );
           });
         }
         
@@ -372,47 +426,7 @@ export const customerTools = {
     },
   }),
 
-  // Fuzzy search customers with partial matching
-  fuzzySearchCustomers: createTool({
-    id: "fuzzySearchCustomers",
-    description: "Fuzzy search for customers with partial matching in online database",
-    inputSchema: z.object({
-      query: z
-        .string()
-        .describe("Partial search query (company name, email, or phone)"),
-      sessionId: z.string().describe("Session ID for tracking"),
-      threshold: z
-        .number()
-        .optional()
-        .describe("Similarity threshold (0.0-1.0)"),
-    }),
-    execute: async ({ context }: { context: any }) => {
-      const { query, sessionId, threshold = 0.7 } = context;
-      try {
-        const byCompany = await mcpLookupRows("Customers", "会社名", query);
-        const byEmail = await mcpLookupRows("Customers", "メールアドレス", query);
-        const byPhone = await mcpLookupRows("Customers", "電話番号", query);
-        const merged = [...(byCompany?.results||[]), ...(byEmail?.results||[]), ...(byPhone?.results||[])];
-        if (merged.length) {
-          return {
-            success: true,
-            message: `曖昧検索で${merged.length}件のお客様が見つかりました。`,
-            data: merged,
-            searchId: `fuzzy_${Date.now()}`,
-          };
-        } else {
-          return {
-            success: false,
-            message: "曖昧検索でお客様が見つかりませんでした。",
-            data: null,
-            searchId: `fuzzy_${Date.now()}`,
-          };
-        }
-      } catch (error) {
-        throw new Error(`Fuzzy customer search failed: ${error}`);
-      }
-    },
-  }),
+
 
   // Get customer by details with online validation
   getCustomerByDetails: createTool({
@@ -499,27 +513,29 @@ export const customerTools = {
         const idPreferred = preferId !== false; // default true
         if (effectiveCustomerId && idPreferred) {
           const byId = await mcpLookupRows("Customers", "顧客ID", effectiveCustomerId);
-          results.push(...(byId?.results||[]));
+          results.push(...byId);
         } else {
           if (normalizedCompanyName) {
             const byCompany = await mcpLookupRows("Customers", "会社名", normalizedCompanyName);
-            results.push(...(byCompany?.results||[]));
+            results.push(...byCompany);
+            if (results.length === 0) {
+              const noSpace = normalizedCompanyName.replace(/\s+/g, "");
+              if (noSpace && noSpace !== normalizedCompanyName) {
+                const byCompanyNoSpace = await mcpLookupRows("Customers", "会社名", noSpace);
+                results.push(...byCompanyNoSpace);
+              }
+            }
           }
           if (email) {
             const byEmail = await mcpLookupRows("Customers", "メールアドレス", email);
-            results.push(...(byEmail?.results||[]));
+            results.push(...byEmail);
           }
           if (phone) {
             const byPhone = await mcpLookupRows("Customers", "電話番号", phone);
-            results.push(...(byPhone?.results||[]));
+            results.push(...byPhone);
           }
           if (!results.length && (normalizedCompanyName || email || phone)) {
-            const all = await zapierMcp.callTool("google_sheets_get_many_spreadsheet_rows_advanced", {
-              instructions: "customers fallback scan",
-              worksheet: "Customers",
-              row_count: 500,
-            });
-            const rows = (all?.results as any[]) || [];
+            const rows = await mcpListRows("Customers", 500);
             const fuzzy = rows.filter((r: any) => {
               const name = String(r?.["COL$B"] || "");
               const em = String(r?.["COL$C"] || "").toLowerCase();
@@ -535,7 +551,7 @@ export const customerTools = {
           // If still nothing and we have an ID but idPreferred=false, try ID as a fallback
           if (!results.length && effectiveCustomerId) {
             const byId2 = await mcpLookupRows("Customers", "顧客ID", effectiveCustomerId);
-            results.push(...(byId2?.results||[]));
+            results.push(...byId2);
           }
         }
         if (results.length) {
@@ -752,8 +768,7 @@ export const customerTools = {
     execute: async ({ context }: { context: any }) => {
       const { customerId, sessionId } = context;
       try {
-        const mcpRes = await mcpLookupRows("Customers", "顧客ID", customerId);
-        const rows = (mcpRes?.results || []);
+        const rows = await mcpLookupRows("Customers", "顧客ID", customerId);
         if (rows.length) {
           return {
             success: true,

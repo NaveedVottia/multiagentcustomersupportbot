@@ -54,7 +54,7 @@ export const schedulingTools = createTool({
     data: z.any(),
     message: z.string(),
   }),
-  execute: async ({ context }) => {
+  execute: async ({ context }: { context: any }) => {
     const {
       action,
       appointmentData,

@@ -30,7 +30,7 @@ function getClient(): Langfuse | null {
 
 export async function loadLangfusePrompt(
   name: string,
-  { label = "production", cacheTtlMs = 60_000 }: { label?: string; cacheTtlMs?: number } = {}
+  { label = "production", cacheTtlMs = 1_000 }: { label?: string; cacheTtlMs?: number } = {} // Reduced TTL to 1 second
 ): Promise<string> {
   // Keep cache key shape compatible with previous implementations (label not used by SDK v2)
   const cacheKey = `${name}:${label}`;
@@ -62,5 +62,9 @@ export async function loadLangfusePrompt(
   console.warn(`[Langfuse] ⚠️ No prompt available for ${name}. Returning empty instructions.`);
   promptCache[cacheKey] = { content: "", fetchedAt: Date.now() };
   return "";
+}
+
+export function clearLangfusePromptCache(): void {
+  for (const k of Object.keys(promptCache)) delete (promptCache as any)[k];
 }
 

@@ -4,6 +4,7 @@ import { bedrock } from "@ai-sdk/amazon-bedrock";
 import { repairTools } from "../../tools/sanden/repair-tools";
 import { commonTools } from "../../tools/sanden/common-tools";
 import { loadLangfusePrompt } from "../../prompts/langfuse";
+import { langfuse } from "../../../integrations/langfuse";
 
 export const repairQaAgentIssueAnalysis = new Agent({ 
   name: "repair-qa-agent-issue-analysis",
@@ -25,5 +26,8 @@ export const repairQaAgentIssueAnalysis = new Agent({
   try {
     const prompt = await loadLangfusePrompt("repair-qa-agent-issue-analysis", { label: "production" });
     (repairQaAgentIssueAnalysis as any).instructions = prompt;
+    try {
+      await langfuse.logPrompt("repair-qa-agent-issue-analysis", { label: "production", agentId: "repair-qa-agent-issue-analysis" }, prompt, { length: prompt?.length || 0 });
+    } catch {}
   } catch {}
 })();
