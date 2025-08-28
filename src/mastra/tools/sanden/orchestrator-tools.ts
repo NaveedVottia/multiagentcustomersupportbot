@@ -238,11 +238,19 @@ export const lookupCustomerFromDatabase = createTool({
         if (storeName.toLowerCase().includes("station")) {
           searchQueries.push("駅前");
         }
+        if (storeName.toLowerCase().includes("donki") || storeName.includes("ドン・キホーテ")) {
+          searchQueries.push("ドン・キホーテ");
+        }
+        if (storeName.toLowerCase().includes("shibuya") || storeName.includes("渋谷")) {
+          searchQueries.push("渋谷");
+        }
       }
       
       // Try each search query
       for (const query of searchQueries) {
         try {
+          console.log(`🔍 [Customer Lookup] Trying query: "${query}" with column: "${lookupColumn}"`);
+          
           const result = await zapierMcp.callTool("google_sheets_lookup_spreadsheet_rows_advanced", {
             instructions: `Look up customer data by ${searchType} with query: ${query}`,
             worksheet: "Customers",
@@ -251,29 +259,112 @@ export const lookupCustomerFromDatabase = createTool({
             row_count: "5"
           });
           
+          console.log(`🔍 [Customer Lookup] Zapier result for "${query}":`, JSON.stringify(result, null, 2));
+          
           if (result && result.length > 0) {
-            // Find the best match
-            const bestMatch = result.find((row: any) => {
-              const companyName = row["会社名"] || "";
-              return companyName.includes("ウエルシア") && companyName.includes("川崎");
-            }) || result[0];
+            console.log(`🔍 [Customer Lookup] Processing result for "${query}":`, JSON.stringify(result, null, 2));
             
-            const customerData = {
-              customerId: bestMatch["顧客ID"],
-              storeName: bestMatch["会社名"],
-              email: bestMatch["メールアドレス"],
-              phone: bestMatch["電話番号"],
-              location: bestMatch["所在地"],
-              found: true
-            };
+            // Handle Zapier MCP response structure
+            // The result has content array with text that contains JSON
+            let parsedResult: any = null;
             
-            const res = { success: true, customerData, found: true };
-            await langfuse.logToolExecution(traceId, "lookupCustomerFromDatabase", { storeName, searchType, matchedQuery: query }, res);
-            await langfuse.endTrace(traceId, { success: true });
-            return res;
+            if (result[0]?.content && Array.isArray(result[0].content)) {
+              console.log(`🔍 [Customer Lookup] Found content array with ${result[0].content.length} items`);
+              const textContent = result[0].content.find((item: any) => item.type === "text")?.text;
+              console.log(`🔍 [Customer Lookup] Text content found:`, textContent ? "YES" : "NO");
+              if (textContent) {
+                console.log(`🔍 [Customer Lookup] Text content preview:`, textContent.substring(0, 100) + "...");
+                try {
+                  parsedResult = JSON.parse(textContent);
+                  console.log(`🔍 [Customer Lookup] ✅ Successfully parsed JSON result`);
+                  console.log(`🔍 [Customer Lookup] Parsed JSON result:`, JSON.stringify(parsedResult, null, 2));
+                } catch (parseError) {
+                  console.error(`❌ [Customer Lookup] Failed to parse JSON:`, parseError);
+                  console.error(`❌ [Customer Lookup] Parse error details:`, JSON.stringify(parseError, null, 2));
+                }
+              } else {
+                console.log(`❌ [Customer Lookup] No text content found in result`);
+              }
+            } else {
+              console.log(`❌ [Customer Lookup] No content array found in result`);
+            }
+            
+            // Handle new Zapier response format with numbered keys
+            if (parsedResult && typeof parsedResult === "object") {
+              console.log(`🔍 [Customer Lookup] Processing parsedResult:`, JSON.stringify(parsedResult, null, 2));
+              
+              // Look for numbered keys (0, 1, 2, etc.) that contain rows
+              const numberedKeys = Object.keys(parsedResult).filter(key => !isNaN(Number(key)));
+              console.log(`🔍 [Customer Lookup] Found numbered keys:`, numberedKeys);
+              
+              for (const key of numberedKeys) {
+                const resultSection = parsedResult[key];
+                console.log(`🔍 [Customer Lookup] Processing key "${key}":`, JSON.stringify(resultSection, null, 2));
+                
+                if (resultSection?.rows && Array.isArray(resultSection.rows) && resultSection.rows.length > 0) {
+                  console.log(`🔍 [Customer Lookup] Found rows array with ${resultSection.rows.length} rows`);
+                  const row = resultSection.rows[0];
+                  console.log(`🔍 [Customer Lookup] Found row data:`, JSON.stringify(row, null, 2));
+                  
+                  const customerData = {
+                    customerId: row["COL$A"] || row["顧客ID"],
+                    storeName: row["COL$B"] || row["会社名"],
+                    email: row["COL$C"] || row["メールアドレス"],
+                    phone: row["COL$D"] || row["電話番号"],
+                    location: row["COL$E"] || row["所在地"],
+                    found: true
+                  };
+                  
+                  console.log(`🔍 [Customer Lookup] Extracted customer data:`, JSON.stringify(customerData, null, 2));
+                  
+                  if (customerData.storeName || customerData.customerId) {
+                    console.log(`🔍 [Customer Lookup] ✅ Customer data validation passed, returning success`);
+                    const res = { success: true, customerData, found: true };
+                    await langfuse.logToolExecution(traceId, "lookupCustomerFromDatabase", { storeName, searchType, matchedQuery: query }, res);
+                    await langfuse.endTrace(traceId, { success: true });
+                    return res;
+                  } else {
+                    console.log(`❌ [Customer Lookup] Customer data validation failed: storeName=${customerData.storeName}, customerId=${customerData.customerId}`);
+                  }
+                } else {
+                  console.log(`🔍 [Customer Lookup] No rows found in key "${key}"`);
+                }
+              }
+              
+              // Fallback: try old format for backward compatibility
+              if (parsedResult?.results && Array.isArray(parsedResult.results) && parsedResult.results.length > 0) {
+                console.log(`🔍 [Customer Lookup] Trying old format with results array`);
+                const firstResult = parsedResult.results[0];
+                
+                if (firstResult.rows && Array.isArray(firstResult.rows) && firstResult.rows.length > 0) {
+                  const row = firstResult.rows[0];
+                  const customerData = {
+                    customerId: row["COL$A"] || row["顧客ID"],
+                    storeName: row["COL$B"] || row["会社名"],
+                    email: row["COL$C"] || row["メールアドレス"],
+                    phone: row["COL$D"] || row["電話番号"],
+                    location: row["COL$E"] || row["所在地"],
+                    found: true
+                  };
+                  
+                  if (customerData.storeName || customerData.customerId) {
+                    console.log(`🔍 [Customer Lookup] ✅ Customer data found using old format`);
+                    const res = { success: true, customerData, found: true };
+                    await langfuse.logToolExecution(traceId, "lookupCustomerFromDatabase", { storeName, searchType, matchedQuery: query }, res);
+                    await langfuse.endTrace(traceId, { success: true });
+                    return res;
+                  }
+                }
+              }
+              
+              console.log(`❌ [Customer Lookup] No valid data found in any format`);
+            } else {
+              console.log(`❌ [Customer Lookup] Invalid parsedResult format`);
+            }
           }
         } catch (error) {
-          console.error(`Failed to search with query "${query}":`, error);
+          console.error(`❌ [Customer Lookup] Failed to search with query "${query}":`, error);
+          console.error(`❌ [Customer Lookup] Error details:`, JSON.stringify(error, null, 2));
         }
       }
       
@@ -331,4 +422,270 @@ export const logCustomerData = createTool({
   },
 });
 
-export const orchestratorTools = { delegateTo, escalateToHuman, validateContext, updateWorkflowState, logCustomerData, lookupCustomerFromDatabase };
+export const streamToZapierFormat = createTool({
+  id: "streamToZapierFormat",
+  description: "Streams response in Zapier-compatible format for UI consumption",
+  inputSchema: z.object({ 
+    message: z.string(), 
+    messageId: z.string().optional(),
+    showProcessing: z.boolean().optional() 
+  }),
+  outputSchema: z.object({ success: z.boolean(), streamFormat: z.string() }),
+  async execute(args: ToolExecuteArgs) {
+    const { writer, mastra } = args as any;
+    const { message, messageId = `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, showProcessing = false } = getArgs(args) as { message: string; messageId?: string; showProcessing?: boolean };
+    
+    const traceId = await langfuse.startTrace("tool.streamToZapierFormat", { messageLength: message?.length || 0 });
+    
+    try {
+      // Generate Zapier-compatible streaming format
+      const streamFormat = generateZapierStreamFormat(message, messageId, showProcessing);
+      
+      // If writer is available, stream the formatted response
+      if (writer) {
+        // Stream the f: line first
+        writer.write(`f:{"messageId":"${messageId}"}\n`);
+        
+        // Stream each character with 0: prefix
+        for (const char of message) {
+          writer.write(`0:"${char}"\n`);
+        }
+        
+        // Stream the e: line
+        const usage = { promptTokens: 0, completionTokens: message.length };
+        writer.write(`e:{"finishReason":"stop","usage":${JSON.stringify(usage)},"isContinued":false}\n`);
+        
+        // Stream the d: line
+        writer.write(`d:{"finishReason":"stop","usage":${JSON.stringify(usage)}}\n`);
+      }
+      
+      const res = { success: true, streamFormat };
+      await langfuse.logToolExecution(traceId, "streamToZapierFormat", { messageLength: message?.length || 0, messageId }, res);
+      await langfuse.endTrace(traceId, { success: true });
+      return res;
+    } catch (error) {
+      console.error("Failed to stream in Zapier format:", error);
+      const res = { success: false, streamFormat: "" };
+      await langfuse.logToolExecution(traceId, "streamToZapierFormat", { messageLength: message?.length || 0, messageId }, res);
+      await langfuse.endTrace(traceId, { success: false });
+      return res;
+    }
+  },
+});
+
+// Helper function to generate Zapier-compatible streaming format
+function generateZapierStreamFormat(message: string, messageId: string, showProcessing: boolean = false): string {
+  const usage = { promptTokens: 0, completionTokens: message.length };
+  
+  let stream = `f:{"messageId":"${messageId}"}\n`;
+  
+  // Add processing indicator if requested
+  if (showProcessing) {
+    stream += `0:"(処理中...)"\n`;
+  }
+  
+  // Stream each character
+  for (const char of message) {
+    stream += `0:"${char}"\n`;
+  }
+  
+  // Add end markers
+  stream += `e:{"finishReason":"stop","usage":${JSON.stringify(usage)},"isContinued":false}\n`;
+  stream += `d:{"finishReason":"stop","usage":${JSON.stringify(usage)}}\n`;
+  
+  return stream;
+}
+
+export const streamRealtimeToZapier = createTool({
+  id: "streamRealtimeToZapier",
+  description: "Streams response in real-time using Zapier-compatible format with proper chunking",
+  inputSchema: z.object({ 
+    message: z.string(), 
+    messageId: z.string().optional(),
+    chunkDelay: z.number().optional(),
+    showProcessing: z.boolean().optional() 
+  }),
+  outputSchema: z.object({ success: z.boolean(), messageId: z.string() }),
+  async execute(args: ToolExecuteArgs) {
+    const { writer, mastra } = args as any;
+    const { message, messageId = `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, chunkDelay = 50, showProcessing = false } = getArgs(args) as { message: string; messageId?: string; chunkDelay?: number; showProcessing?: boolean };
+    
+    const traceId = await langfuse.startTrace("tool.streamRealtimeToZapier", { messageLength: message?.length || 0, chunkDelay });
+    
+    try {
+      // If writer is available, stream in real-time
+      if (writer) {
+        // Start with message metadata
+        writer.write(`f:{"messageId":"${messageId}"}\n`);
+        
+        // Add processing indicator if requested
+        if (showProcessing) {
+          writer.write(`0:"(処理中...)"\n`);
+          await new Promise(resolve => setTimeout(resolve, chunkDelay));
+        }
+        
+        // Stream each character with delay for realistic typing effect
+        for (const char of message) {
+          writer.write(`0:"${char}"\n`);
+          await new Promise(resolve => setTimeout(resolve, chunkDelay));
+        }
+        
+        // Add end markers
+        const usage = { promptTokens: 0, completionTokens: message.length };
+        writer.write(`e:{"finishReason":"stop","usage":${JSON.stringify(usage)},"isContinued":false}\n`);
+        writer.write(`d:{"finishReason":"stop","usage":${JSON.stringify(usage)}}\n`);
+      }
+      
+      const res = { success: true, messageId };
+      await langfuse.logToolExecution(traceId, "streamRealtimeToZapier", { messageLength: message?.length || 0, messageId, chunkDelay }, res);
+      await langfuse.endTrace(traceId, { success: true });
+      return res;
+    } catch (error) {
+      console.error("Failed to stream real-time in Zapier format:", error);
+      const res = { success: false, messageId: "" };
+      await langfuse.logToolExecution(traceId, "streamRealtimeToZapier", { messageLength: message?.length || 0, messageId, chunkDelay }, res);
+      await langfuse.endTrace(traceId, { success: false });
+      return res;
+    }
+  },
+});
+
+export const streamZapierResponse = createTool({
+  id: "streamZapierResponse",
+  description: "Converts Zapier API responses to streaming format for UI consumption",
+  inputSchema: z.object({ 
+    zapierResponse: z.any(),
+    messageId: z.string().optional(),
+    showProcessing: z.boolean().optional() 
+  }),
+  outputSchema: z.object({ success: z.boolean(), streamFormat: z.string() }),
+  async execute(args: ToolExecuteArgs) {
+    const { writer, mastra } = args as any;
+    const { zapierResponse, messageId = `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`, showProcessing = false } = getArgs(args) as { zapierResponse: any; messageId?: string; showProcessing?: boolean };
+    
+    const traceId = await langfuse.startTrace("tool.streamZapierResponse", { responseType: typeof zapierResponse });
+    
+    try {
+      // Convert Zapier response to human-readable text
+      const message = convertZapierResponseToText(zapierResponse);
+      
+      // Generate Zapier-compatible streaming format
+      const streamFormat = generateZapierStreamFormat(message, messageId, showProcessing);
+      
+      // If writer is available, stream the formatted response
+      if (writer) {
+        // Stream the f: line first
+        writer.write(`f:{"messageId":"${messageId}"}\n`);
+        
+        // Add processing indicator if requested
+        if (showProcessing) {
+          writer.write(`0:"(処理中...)"\n`);
+        }
+        
+        // Stream each character with 0: prefix
+        for (const char of message) {
+          writer.write(`0:"${char}"\n`);
+        }
+        
+        // Stream the e: line
+        const usage = { promptTokens: 0, completionTokens: message.length };
+        writer.write(`e:{"finishReason":"stop","usage":${JSON.stringify(usage)},"isContinued":false}\n`);
+        
+        // Stream the d: line
+        writer.write(`d:{"finishReason":"stop","usage":${JSON.stringify(usage)}}\n`);
+      }
+      
+      const res = { success: true, streamFormat };
+      await langfuse.logToolExecution(traceId, "streamZapierResponse", { responseType: typeof zapierResponse, messageLength: message?.length || 0, messageId }, res);
+      await langfuse.endTrace(traceId, { success: true });
+      return res;
+    } catch (error) {
+      console.error("Failed to stream Zapier response:", error);
+      const res = { success: false, streamFormat: "" };
+      await langfuse.logToolExecution(traceId, "streamZapierResponse", { responseType: typeof zapierResponse, messageId }, res);
+      await langfuse.endTrace(traceId, { success: false });
+      return res;
+    }
+  },
+});
+
+// Helper function to convert Zapier response to human-readable text
+function convertZapierResponseToText(zapierResponse: any): string {
+  if (!zapierResponse || typeof zapierResponse !== "object") {
+    return "No data found.";
+  }
+  
+  try {
+    // Handle the new Zapier format with numbered keys
+    const numberedKeys = Object.keys(zapierResponse).filter(key => !isNaN(Number(key)));
+    
+    if (numberedKeys.length > 0) {
+      const results: any[] = [];
+      
+      for (const key of numberedKeys) {
+        const resultSection = zapierResponse[key];
+        if (resultSection?.rows && Array.isArray(resultSection.rows)) {
+          results.push(...resultSection.rows);
+        }
+      }
+      
+      if (results.length > 0) {
+        return formatCustomerResults(results);
+      }
+    }
+    
+    // Fallback: try old format
+    if (zapierResponse?.results && Array.isArray(zapierResponse.results)) {
+      const allRows: any[] = [];
+      for (const result of zapierResponse.results) {
+        if (result?.rows && Array.isArray(result.rows)) {
+          allRows.push(...result.rows);
+        }
+      }
+      if (allRows.length > 0) {
+        return formatCustomerResults(allRows);
+      }
+    }
+    
+    return "No data found.";
+  } catch (error) {
+    console.error("Error converting Zapier response:", error);
+    return "An error occurred while processing data.";
+  }
+}
+
+// Helper function to format customer results as readable text
+function formatCustomerResults(rows: any[]): string {
+  if (rows.length === 0) return "No data found.";
+  
+  let text = `Customer data found (${rows.length} records):\n\n`;
+  
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    const customerId = row["COL$A"] || row["顧客ID"] || "Unknown";
+    const storeName = row["COL$B"] || row["会社名"] || "Unknown";
+    const email = row["COL$C"] || row["メールアドレス"] || "Unknown";
+    const phone = row["COL$D"] || row["電話番号"] || "Unknown";
+    const location = row["COL$E"] || row["所在地"] || "Unknown";
+    
+    text += `${i + 1}. ${storeName}\n`;
+    text += `   Customer ID: ${customerId}\n`;
+    text += `   Email: ${email}\n`;
+    text += `   Phone: ${phone}\n`;
+    text += `   Location: ${location}\n\n`;
+  }
+  
+  return text.trim();
+}
+
+export const orchestratorTools = { 
+  delegateTo, 
+  escalateToHuman, 
+  validateContext, 
+  updateWorkflowState, 
+  logCustomerData, 
+  lookupCustomerFromDatabase,
+  streamToZapierFormat,
+  streamRealtimeToZapier,
+  streamZapierResponse
+};

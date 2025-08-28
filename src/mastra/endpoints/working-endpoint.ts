@@ -29,21 +29,21 @@ export class WorkingEndpoint {
         try {
           const result = await delegateTo.execute({ 
             agentId: "routing-agent-customer-identification",
-            message: "顧客情報の確認をお願いします。",
+            message: "Customer information verification requested.",
             context: {}
           });
           
           console.log("✅ [WorkingEndpoint] delegateTo executed successfully:", result);
           
           return {
-            text: `[ツール実行完了: delegateTo]\n${JSON.stringify(result, null, 2)}\n\nツールが正常に実行されました！`,
+            text: `[Tool execution completed: delegateTo]\n${JSON.stringify(result, null, 2)}\n\nTool executed successfully!`,
             type: "text"
           };
           
         } catch (error) {
           console.error("❌ [WorkingEndpoint] delegateTo execution failed:", error);
           return {
-            text: `[ツール実行エラー: delegateTo]\n${error instanceof Error ? error.message : String(error)}`,
+            text: `[Tool execution error: delegateTo]\n${error instanceof Error ? error.message : String(error)}`,
             type: "text"
           };
         }
@@ -53,7 +53,7 @@ export class WorkingEndpoint {
     // If no tool execution needed, return a default response
     console.log("🔍 [WorkingEndpoint] No tool execution needed, returning default response");
     return {
-      text: "こんにちは！サンデン・リテールシステム修理受付AIです。\n\n以下のコマンドが利用できます：\n- 'delegate': エージェント委譲テスト",
+      text: "Hello! I'm the AI assistant.\n\nAvailable commands:\n- 'delegate': Test agent delegation",
       type: "text"
     };
   }

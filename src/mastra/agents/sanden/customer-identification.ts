@@ -7,17 +7,26 @@ import { orchestratorTools } from "../../tools/sanden/orchestrator-tools";
 import { loadLangfusePrompt } from "../../prompts/langfuse";
 import { langfuse } from "../../../integrations/langfuse";
 
-// Load Langfuse prompt only
-const lfci = await loadLangfusePrompt("routing-agent-customer-identification", { label: "production" });
-const CUSTOMER_IDENTIFICATION_INSTRUCTIONS = lfci?.trim() || "";
+// Load Langfuse prompt with fallback
+let CUSTOMER_IDENTIFICATION_INSTRUCTIONS = "";
 
-// Debug logging
-console.log("🔍 Customer Identification Agent Instructions:");
-console.log("📝 Langfuse Instructions Length:", CUSTOMER_IDENTIFICATION_INSTRUCTIONS.length);
-console.log("📝 Using Langfuse:", CUSTOMER_IDENTIFICATION_INSTRUCTIONS ? "YES" : "NO (empty)");
-if (CUSTOMER_IDENTIFICATION_INSTRUCTIONS) {
-  console.log("📝 Instructions Preview:", CUSTOMER_IDENTIFICATION_INSTRUCTIONS.substring(0, 200) + "...");
-}
+// Load instructions immediately
+(async () => {
+  try {
+    console.log("🔍 Loading instructions for Customer Identification Agent...");
+    const instructions = await loadLangfusePrompt("routing-agent-customer-identification", { label: "production" });
+    if (instructions && instructions.trim().length > 0) {
+      CUSTOMER_IDENTIFICATION_INSTRUCTIONS = instructions.trim();
+      console.log(`✅ Successfully loaded Langfuse instructions (length: ${CUSTOMER_IDENTIFICATION_INSTRUCTIONS.length})`);
+    } else {
+      throw new Error("Empty instructions from Langfuse");
+    }
+  } catch (error) {
+    console.warn("⚠️ Failed to load Langfuse instructions, using minimal fallback:", error);
+    // Minimal fallback to prevent server crash
+    CUSTOMER_IDENTIFICATION_INSTRUCTIONS = "You are an AI assistant. Respond appropriately to user queries.";
+  }
+})();
 
 export const routingAgentCustomerIdentification = new Agent({ 
   name: "routing-agent-customer-identification",
@@ -35,11 +44,18 @@ export const routingAgentCustomerIdentification = new Agent({
 console.log("✅ Customer Identification Agent created with instructions length:", CUSTOMER_IDENTIFICATION_INSTRUCTIONS.length);
 
 // Log prompt to Langfuse tracing
-try {
-  await langfuse.logPrompt(
-    "routing-agent-customer-identification",
-    { label: "production", agentId: "routing-agent-customer-identification" },
-    CUSTOMER_IDENTIFICATION_INSTRUCTIONS,
-    { length: CUSTOMER_IDENTIFICATION_INSTRUCTIONS.length }
-  );
-} catch {}
+setTimeout(async () => {
+  if (CUSTOMER_IDENTIFICATION_INSTRUCTIONS && CUSTOMER_IDENTIFICATION_INSTRUCTIONS.length > 100) {
+    try {
+      await langfuse.logPrompt(
+        "routing-agent-customer-identification",
+        { label: "production", agentId: "routing-agent-customer-identification" },
+        CUSTOMER_IDENTIFICATION_INSTRUCTIONS,
+        { length: CUSTOMER_IDENTIFICATION_INSTRUCTIONS.length }
+      );
+      console.log("✅ Prompt logged to Langfuse tracing");
+    } catch (error) {
+      console.warn("⚠️ Failed to log prompt to Langfuse:", error);
+    }
+  }
+}, 1000);

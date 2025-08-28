@@ -45,14 +45,68 @@ export async function loadLangfusePrompt(
   }
 
   try {
-    // SDK handles internal caching; expose configurable TTL
-    const ttlSeconds = Math.max(1, Math.floor(cacheTtlMs / 1000));
-    const promptClient = await client.getPrompt(name, undefined, { cacheTtlSeconds: ttlSeconds });
-    const text = promptClient?.prompt ?? "";
-    if (text) {
-      promptCache[cacheKey] = { content: text, fetchedAt: Date.now() };
-      console.log(`[Langfuse] ✅ Loaded prompt via SDK: ${name} (v${promptClient.version})`);
-      return text;
+    // Try different possible method names for the Langfuse SDK
+    let promptText = "";
+    let methodUsed = "none";
+
+    try {
+      // Method 1: Try getPrompt (singular) - this is the standard method
+      if (typeof (client as any).getPrompt === "function") {
+        console.log(`[Langfuse] Using SDK getPrompt method for ${name}`);
+        const response = await (client as any).getPrompt(name);
+        if (response && typeof response === "string") {
+          promptText = response;
+          methodUsed = "getPrompt";
+        } else if (response && typeof response === "object" && response.prompt) {
+          promptText = response.prompt;
+          methodUsed = "getPrompt.prompt";
+        }
+      }
+      // Method 2: Try getPrompts (plural) - some versions might use this
+      else if (typeof (client as any).getPrompts === "function" && !promptText) {
+        console.log(`[Langfuse] Using SDK getPrompts method for ${name}`);
+        const response = await (client as any).getPrompts(name);
+        if (response && typeof response === "string") {
+          promptText = response;
+          methodUsed = "getPrompts";
+        } else if (response && typeof response === "object" && response.prompt) {
+          promptText = response.prompt;
+          methodUsed = "getPrompts.prompt";
+        }
+      }
+      // Method 3: Try to access prompts property directly
+      else if ((client as any).prompts && typeof (client as any).prompts.get === "function" && !promptText) {
+        console.log(`[Langfuse] Using SDK prompts.get method for ${name}`);
+        const response = await (client as any).prompts.get(name);
+        if (response && typeof response === "string") {
+          promptText = response;
+          methodUsed = "prompts.get";
+        } else if (response && typeof response === "object" && response.prompt) {
+          promptText = response.prompt;
+          methodUsed = "prompts.get.prompt";
+        }
+      }
+      else {
+        // Log all available methods for debugging
+        const availableMethods = Object.getOwnPropertyNames(Object.getPrototypeOf(client))
+          .filter(name => typeof (client as any)[name] === "function");
+        console.log(`[Langfuse] Available methods:`, availableMethods);
+        console.log(`[Langfuse] Available properties:`, Object.keys(client));
+        
+        throw new Error("No known prompt fetching method available in Langfuse SDK");
+      }
+    } catch (apiError) {
+      console.log(`[Langfuse] SDK method '${methodUsed}' failed:`, apiError);
+      throw new Error(`SDK method '${methodUsed}' failed: ${apiError}`);
+    }
+
+    if (promptText) {
+      promptCache[cacheKey] = { content: promptText, fetchedAt: Date.now() };
+      console.log(`[Langfuse] ✅ Loaded prompt via SDK: ${name} using method: ${methodUsed}`);
+      console.log(`[Langfuse] Prompt length: ${promptText.length} characters`);
+      return promptText;
+    } else {
+      console.warn(`[Langfuse] ⚠️ No prompt text extracted for ${name} using method: ${methodUsed}`);
     }
   } catch (err) {
     console.warn(`[Langfuse] Prompt fetch failed for ${name}:`, err);

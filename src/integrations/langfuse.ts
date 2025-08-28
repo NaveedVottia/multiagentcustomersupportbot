@@ -1,9 +1,23 @@
 import { Langfuse } from "langfuse";
 
+export interface SessionData {
+  sessionId: string;
+  userId?: string;
+  metadata?: Record<string, any>;
+}
+
+export interface EvaluationScore {
+  score: number; // 0-10 scale
+  comment?: string;
+  criteria?: string[];
+  metadata?: Record<string, any>;
+}
+
 export class LangfuseIntegration {
   private langfuse: Langfuse | null = null;
   private langfuseTracing: Langfuse | null = null;
   private enabled: boolean = false;
+  private currentSession: SessionData | null = null;
 
   constructor() {
     this.tryInitFromEnv();
@@ -29,6 +43,155 @@ export class LangfuseIntegration {
     } catch (e) {
       console.error("[Langfuse] Initialization error:", e);
       this.enabled = false;
+    }
+  }
+
+  // Session Management
+  startSession(sessionId: string, userId?: string, metadata?: Record<string, any>): void {
+    this.currentSession = { sessionId, userId, metadata };
+    console.log(`[Langfuse] Session started: ${sessionId}${userId ? ` for user: ${userId}` : ''}`);
+  }
+
+  getCurrentSession(): SessionData | null {
+    return this.currentSession;
+  }
+
+  endSession(): void {
+    if (this.currentSession) {
+      console.log(`[Langfuse] Session ended: ${this.currentSession.sessionId}`);
+      this.currentSession = null;
+    }
+  }
+
+  // User Tracking
+  setUser(userId: string, metadata?: Record<string, any>): void {
+    if (this.currentSession) {
+      this.currentSession.userId = userId;
+      if (metadata) {
+        this.currentSession.metadata = { ...this.currentSession.metadata, ...metadata };
+      }
+      console.log(`[Langfuse] User set: ${userId}`);
+    }
+  }
+
+  // Enhanced Trace Management with Sessions and Users
+  async startTrace(name: string, metadata?: any): Promise<string | null> {
+    try {
+      this.tryInitFromEnv();
+      if (!this.enabled || !this.langfuseTracing) {
+        const fallback = `trace_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+        console.log(`[Langfuse] Fallback trace started: ${fallback}`);
+        return fallback;
+      }
+
+      const traceMetadata = {
+        ...metadata,
+        ...(this.currentSession && {
+          sessionId: this.currentSession.sessionId,
+          userId: this.currentSession.userId,
+          sessionMetadata: this.currentSession.metadata
+        })
+      };
+
+      const trace = await this.langfuseTracing.trace({
+        name,
+        metadata: traceMetadata,
+        ...(this.currentSession && {
+          sessionId: this.currentSession.sessionId,
+          userId: this.currentSession.userId
+        })
+      });
+
+      console.log(`[Langfuse] Trace started: ${trace.id} for ${name}${this.currentSession ? ` in session: ${this.currentSession.sessionId}` : ''}`);
+      return trace.id;
+    } catch (error) {
+      console.error(`[Langfuse] Error starting trace:`, error);
+      const traceId = `trace_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      console.log(`[Langfuse] Using fallback trace ID: ${traceId}`);
+      return traceId;
+    }
+  }
+
+  // Evaluation and Scoring
+  async scoreTrace(traceId: string | null, score: EvaluationScore): Promise<void> {
+    try {
+      this.tryInitFromEnv();
+      if (!this.enabled || !this.langfuseTracing || (traceId && traceId.startsWith('trace_'))) {
+        console.log(`[Langfuse] Score logged (fallback): ${score.score}/10 for trace: ${traceId}`);
+        return;
+      }
+
+      // Create a score trace that links to the original trace
+      await this.langfuseTracing.trace({
+        name: "evaluation_score",
+        input: { traceId, score },
+        output: { score: score.score, comment: score.comment },
+        metadata: {
+          traceId,
+          score: score.score,
+          comment: score.comment,
+          criteria: score.criteria,
+          ...score.metadata,
+          ...(this.currentSession && {
+            sessionId: this.currentSession.sessionId,
+            userId: this.currentSession.userId
+          })
+        }
+      });
+
+      console.log(`[Langfuse] Score logged: ${score.score}/10 for trace: ${traceId}`);
+    } catch (error) {
+      console.error(`[Langfuse] Error logging score:`, error);
+    }
+  }
+
+  async scoreResponse(responseText: string, score: EvaluationScore, context?: any): Promise<void> {
+    try {
+      this.tryInitFromEnv();
+      if (!this.enabled || !this.langfuseTracing) {
+        console.log(`[Langfuse] Response score logged (fallback): ${score.score}/10`);
+        return;
+      }
+
+      await this.langfuseTracing.trace({
+        name: "response_evaluation",
+        input: { responseText, context },
+        output: { score: score.score, comment: score.comment },
+        metadata: {
+          score: score.score,
+          comment: score.comment,
+          criteria: score.criteria,
+          responseLength: responseText.length,
+          ...score.metadata,
+          ...(this.currentSession && {
+            sessionId: this.currentSession.sessionId,
+            userId: this.currentSession.userId
+          })
+        }
+      });
+
+      console.log(`[Langfuse] Response score logged: ${score.score}/10`);
+    } catch (error) {
+      console.error(`[Langfuse] Error logging response score:`, error);
+    }
+  }
+
+  // Batch Evaluation
+  async scoreMultipleResponses(responses: Array<{ text: string; score: EvaluationScore; context?: any }>): Promise<void> {
+    try {
+      this.tryInitFromEnv();
+      if (!this.enabled || !this.langfuseTracing) {
+        console.log(`[Langfuse] Batch scores logged (fallback): ${responses.length} responses`);
+        return;
+      }
+
+      for (const { text, score, context } of responses) {
+        await this.scoreResponse(text, score, context);
+      }
+
+      console.log(`[Langfuse] Batch scores logged: ${responses.length} responses`);
+    } catch (error) {
+      console.error(`[Langfuse] Error logging batch scores:`, error);
     }
   }
 
@@ -154,14 +317,27 @@ export class LangfuseIntegration {
     try {
       this.tryInitFromEnv();
       if (!this.enabled || !this.langfuseTracing) return;
+
+      const traceMetadata = {
+        ...metadata,
+        ...(this.currentSession && {
+          sessionId: this.currentSession.sessionId,
+          userId: this.currentSession.userId
+        })
+      };
+
       await this.langfuseTracing.trace({
         name: promptName,
         input,
         output,
-        metadata,
+        metadata: traceMetadata,
+        ...(this.currentSession && {
+          sessionId: this.currentSession.sessionId,
+          userId: this.currentSession.userId
+        })
       });
       console.log(
-        `[Langfuse Tracing] Successfully logged prompt: ${promptName}`
+        `[Langfuse Tracing] Successfully logged prompt: ${promptName}${this.currentSession ? ` in session: ${this.currentSession.sessionId}` : ''}`
       );
     } catch (error) {
       const errorMessage =
@@ -175,6 +351,7 @@ export class LangfuseIntegration {
     try {
       this.tryInitFromEnv();
       if (!this.enabled || !this.langfuse || !this.langfuseTracing) return false;
+      
       // Test both connections
       console.log(`[Langfuse] Testing prompt connection...`);
       await this.langfuse.trace({
@@ -200,29 +377,6 @@ export class LangfuseIntegration {
     }
   }
 
-  // Add missing methods for orchestrator tools compatibility
-  async startTrace(name: string, metadata?: any): Promise<string | null> {
-    try {
-      this.tryInitFromEnv();
-      if (!this.enabled || !this.langfuseTracing) {
-        const fallback = `trace_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-        console.log(`[Langfuse] Fallback trace started: ${fallback}`);
-        return fallback;
-      }
-      const trace = await this.langfuseTracing.trace({
-        name,
-        metadata,
-      });
-      console.log(`[Langfuse] Trace started: ${trace.id} for ${name}`);
-      return trace.id;
-    } catch (error) {
-      console.error(`[Langfuse] Error starting trace:`, error);
-      const traceId = `trace_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-      console.log(`[Langfuse] Using fallback trace ID: ${traceId}`);
-      return traceId;
-    }
-  }
-
   async logToolExecution(
     traceId: string | null,
     toolName: string,
@@ -238,14 +392,27 @@ export class LangfuseIntegration {
         return;
       }
       
+      const traceMetadata = {
+        traceId,
+        ...metadata,
+        ...(this.currentSession && {
+          sessionId: this.currentSession.sessionId,
+          userId: this.currentSession.userId
+        })
+      };
+
       // Use proper Langfuse tracing
       await this.langfuseTracing.trace({
         name: `tool:${toolName}`,
         input,
         output,
-        metadata: { traceId, ...metadata },
+        metadata: traceMetadata,
+        ...(this.currentSession && {
+          sessionId: this.currentSession.sessionId,
+          userId: this.currentSession.userId
+        })
       });
-      console.log(`[Langfuse] Tool execution logged: ${toolName}`);
+      console.log(`[Langfuse] Tool execution logged: ${toolName}${this.currentSession ? ` in session: ${this.currentSession.sessionId}` : ''}`);
     } catch (error) {
       console.error(`[Langfuse] Error logging tool execution:`, error);
     }
@@ -260,13 +427,26 @@ export class LangfuseIntegration {
         return;
       }
       
+      const traceMetadata = {
+        ...finalMetadata,
+        ...(this.currentSession && {
+          sessionId: this.currentSession.sessionId,
+          userId: this.currentSession.userId
+        })
+      };
+
       // Use proper Langfuse tracing to end the trace
       await this.langfuseTracing.trace({
         name: "trace_end",
         input: { traceId },
-        output: finalMetadata,
+        output: traceMetadata,
+        metadata: traceMetadata,
+        ...(this.currentSession && {
+          sessionId: this.currentSession.sessionId,
+          userId: this.currentSession.userId
+        })
       });
-      console.log(`[Langfuse] Trace ended: ${traceId}`);
+      console.log(`[Langfuse] Trace ended: ${traceId}${this.currentSession ? ` in session: ${this.currentSession.sessionId}` : ''}`);
     } catch (error) {
       console.error(`[Langfuse] Error ending trace:`, error);
     }
@@ -276,6 +456,34 @@ export class LangfuseIntegration {
   getTracingInstance(): Langfuse | null {
     this.tryInitFromEnv();
     return this.langfuseTracing;
+  }
+
+  // Utility methods for common evaluation scenarios
+  async scoreCustomerServiceResponse(responseText: string, score: number, comment?: string): Promise<void> {
+    await this.scoreResponse(responseText, {
+      score,
+      comment,
+      criteria: ['helpfulness', 'accuracy', 'politeness', 'resolution'],
+      metadata: { category: 'customer_service' }
+    });
+  }
+
+  async scoreTechnicalAccuracy(responseText: string, score: number, comment?: string): Promise<void> {
+    await this.scoreResponse(responseText, {
+      score,
+      comment,
+      criteria: ['technical_accuracy', 'completeness', 'clarity'],
+      metadata: { category: 'technical_support' }
+    });
+  }
+
+  async scoreUserExperience(responseText: string, score: number, comment?: string): Promise<void> {
+    await this.scoreResponse(responseText, {
+      score,
+      comment,
+      criteria: ['clarity', 'helpfulness', 'efficiency', 'user_friendliness'],
+      metadata: { category: 'user_experience' }
+    });
   }
 }
 
