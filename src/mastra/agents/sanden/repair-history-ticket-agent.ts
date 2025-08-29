@@ -35,7 +35,6 @@ async function createRepairHistoryTicketAgent(): Promise<Agent> {
       ...orchestratorTools,
       ...repairTools,
     },
-    memory: new Memory(),
   });
 
   console.log("✅ Repair History & Ticket Agent created with instructions length:", instructions.length);

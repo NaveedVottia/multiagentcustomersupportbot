@@ -39,7 +39,6 @@ async function createRepairSchedulingAgent(): Promise<Agent> {
       ...schedulingTools,
       hybridCreateLogEntry, // Required tool for posting to LOGS sheet
     },
-    memory: new Memory(),
   });
 
   console.log("✅ Repair Scheduling Agent created with instructions length:", instructions.length);

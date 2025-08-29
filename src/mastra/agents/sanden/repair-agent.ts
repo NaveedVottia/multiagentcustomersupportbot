@@ -80,7 +80,6 @@ async function createRepairAgent(): Promise<Agent> {
       updateRepairTool,
       getRepairStatusTool,
     },
-    memory: new Memory(),
   });
 
   console.log("✅ Repair Agent created with instructions length:", instructions.length);

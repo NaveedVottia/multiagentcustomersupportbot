@@ -16,13 +16,13 @@ console.log("LANGFUSE_PUBLIC_KEY:", process.env.LANGFUSE_SECRET_KEY ? "✅ Set" 
 console.log("LANGFUSE_SECRET_KEY:", process.env.LANGFUSE_SECRET_KEY ? "✅ Set" : "❌ Missing");
 
 // Import agent factories
-import { createCustomerIdentificationAgent } from "./agents/sanden/customer-identification.js";
+import { customerIdentificationAgent } from "./agents/sanden/customer-identification.js";
 import { createRepairAgent } from "./agents/sanden/repair-agent.js";
 import { createRepairHistoryTicketAgent } from "./agents/sanden/repair-history-ticket-agent.js";
 import { createRepairSchedulingAgent } from "./agents/sanden/repair-scheduling-agent.js";
 
 // Import workflows
-import { repairWorkflow } from "./workflows/sanden/repair-workflow.js";
+import { repairIntakeOrchestratedWorkflow } from "./workflows/sanden/repair-intake-orchestrated.js";
 
 // Import the setter for Mastra instance
 import { setMastraInstance } from "./tools/sanden/orchestrator-tools.js";
@@ -32,8 +32,7 @@ async function initializeAgents() {
   console.log("🚀 Initializing Mastra agents...");
   
   try {
-    // Create the customer identification agent as the main entry point
-    const customerIdentificationAgent = await createCustomerIdentificationAgent();
+    // Use the pre-created customer identification agent
     console.log("✅ Customer Identification Agent initialized");
     
     const repairAgent = await createRepairAgent();
@@ -58,7 +57,7 @@ async function initializeAgents() {
         "repair-scheduling-agent": repairSchedulingAgent,
       },
       workflows: {
-        repairWorkflow,
+        repairIntakeOrchestratedWorkflow,
       },
       
       storage: new LibSQLStore({
@@ -97,7 +96,7 @@ async function initializeAgents() {
     console.log("🔍 Debug: Available agents and workflows in Mastra instance:");
     console.log("mastra.getAgentById available:", typeof mastraInstance.getAgentById === 'function');
     console.log("Agent count: 4 (1 main customer identification + 3 workflow agents)");
-    console.log("Workflow count: 1 (repair-workflow with 4 steps)");
+    console.log("Workflow count: 1 (repair-intake-orchestrated with 6 steps)");
 
     return mastraInstance;
   } catch (error) {

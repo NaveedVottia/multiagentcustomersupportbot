@@ -732,9 +732,14 @@ app.post("/api/agents/repair-workflow-orchestrator/stream", async (req: Request,
     // Send the message ID first
     writeMessageId(res, messageId);
     
-    // Execute the agent using Mastra's stream method
-    // The agent's memory will automatically maintain conversation context
-    const stream = await agent.stream(msgForAgent);
+    // Execute the agent using Mastra's stream method with proper memory context
+    // Mastra requires memory to be explicitly passed with resource and thread for state persistence
+    const stream = await agent.stream(msgForAgent, {
+      memory: {
+        resource: `user_${sessionId}`,
+        thread: `repair_workflow_${sessionId}`
+      }
+    });
     
     // Stream using Mastra-compliant helper (0:"..." lines)
     const fullTextLength = await streamMastraResponse(stream, res);
@@ -1076,21 +1081,12 @@ app.post("/api/workflows/repair-workflow/execute", async (req: Request, res: Res
     console.log(`🚀 Executing complete repair workflow for session ${sessionId}`);
     console.log(`📋 Customer details:`, customerDetails);
     
-    // Get the Mastra instance
-    const mastraInstance = await mastra;
-    if (!mastraInstance) {
-      return res.status(500).json({ error: "Mastra instance not available" });
-    }
-    
-    // Get the repair workflow
-    const workflow = mastraInstance.workflows?.repairWorkflow;
-    if (!workflow) {
-      return res.status(500).json({ error: "Repair workflow not found" });
-    }
+    // Import the correct workflow
+    const { repairIntakeOrchestratedWorkflow } = await import("./mastra/workflows/sanden/repair-intake-orchestrated.js");
     
     // Execute the workflow
     console.log(`🔄 Starting workflow execution...`);
-    const result = await workflow.execute({
+    const result = await repairIntakeOrchestratedWorkflow.execute({
       customerDetails: {
         email: customerDetails.email,
         phone: customerDetails.phone,
@@ -1445,6 +1441,123 @@ app.get('/api/test-hybrid-tool', async (req: Request, res: Response) => {
     });
   } catch (error) {
     res.status(500).json({ success: false, error: error instanceof Error ? error.message : "Unknown error" });
+  }
+});
+
+// Test endpoint for Zapier MCP integration (customer lookup)
+app.post("/api/test/zapier", async (req: Request, res: Response) => {
+  try {
+    console.log(`🧪 Testing Zapier MCP integration...`);
+    
+    // Import and test the Zapier MCP client directly
+    const { ZapierMcpClient } = await import("./integrations/zapier-mcp.js");
+    const zapierClient = ZapierMcpClient.getInstance();
+    
+    console.log(`🔧 Testing customer lookup via Zapier...`);
+    
+    // Test the customer lookup tool
+    const result = await zapierClient.callTool("google_sheets_lookup_spreadsheet_rows_advanced", {
+      instructions: "Test customer lookup for Welcia Kawasaki Ekimae Store",
+      worksheet: "Customers",
+      row_count: "5",
+      lookup_key: "メールアドレス",
+      lookup_value: "support@welcia-k.jp",
+    });
+    
+    console.log(`✅ Zapier test successful:`, JSON.stringify(result, null, 2));
+    
+    res.json({
+      success: true,
+      message: "Zapier MCP integration test successful",
+      result: result,
+      timestamp: new Date().toISOString(),
+    });
+    
+  } catch (error) {
+    console.error(`❌ Zapier test failed:`, error);
+    res.status(500).json({
+      error: "Zapier MCP integration test failed",
+      details: error instanceof Error ? error.message : "Unknown error",
+      timestamp: new Date().toISOString(),
+    });
+  }
+});
+
+// Test endpoint for Zapier repair history
+app.post("/api/test/zapier-repairs", async (req: Request, res: Response) => {
+  try {
+    console.log(`🧪 Testing Zapier repair history...`);
+    
+    // Import and test the Zapier MCP client directly
+    const { ZapierMcpClient } = await import("./integrations/zapier-mcp.js");
+    const zapierClient = ZapierMcpClient.getInstance();
+    
+    console.log(`🔧 Testing repair history lookup via Zapier...`);
+    
+    // Test the repair history lookup tool
+    const result = await zapierClient.callTool("google_sheets_lookup_spreadsheet_rows_advanced", {
+      instructions: "Get all repairs for customer CUST003",
+      worksheet: "Repairs",
+      row_count: "10",
+      lookup_key: "COL$D", // Customer ID column
+      lookup_value: "CUST003",
+    });
+    
+    console.log(`✅ Zapier repair history test successful:`, JSON.stringify(result, null, 2));
+    
+    res.json({
+      success: true,
+      message: "Zapier repair history test successful",
+      result: result,
+      timestamp: new Date().toISOString(),
+    });
+    
+  } catch (error) {
+    console.error(`❌ Zapier repair history test failed:`, error);
+    res.status(500).json({
+      error: "Zapier repair history test failed",
+      details: error instanceof Error ? error.message : "Unknown error",
+      timestamp: new Date().toISOString(),
+    });
+  }
+});
+
+// Test endpoint for Zapier products
+app.post("/api/test/zapier-products", async (req: Request, res: Response) => {
+  try {
+    console.log(`🧪 Testing Zapier products...`);
+    
+    // Import and test the Zapier MCP client directly
+    const { ZapierMcpClient } = await import("./integrations/zapier-mcp.js");
+    const zapierClient = ZapierMcpClient.getInstance();
+    
+    console.log(`🔧 Testing products lookup via Zapier...`);
+    
+    // Test the products lookup tool
+    const result = await zapierClient.callTool("google_sheets_lookup_spreadsheet_rows_advanced", {
+      instructions: "Get all products for customer CUST003",
+      worksheet: "Products",
+      row_count: "10",
+      lookup_key: "COL$B", // Customer ID column
+      lookup_value: "CUST003",
+    });
+    
+    console.log(`✅ Zapier products test successful:`, JSON.stringify(result, null, 2));
+    
+    res.json({
+      success: true,
+      message: "Zapier products test successful",
+      result: result,
+      timestamp: new Date().toISOString(),
+    });
+    
+  } catch (error) {
+    console.error(`❌ Zapier products test failed:`, error);
+    res.status(500).json({
+      error: "Zapier products test failed",
+      details: error instanceof Error ? error.message : "Unknown error",
+      timestamp: new Date().toISOString(),
+    });
   }
 });
 

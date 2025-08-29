@@ -77,9 +77,10 @@ Restart from Step 1.
 LOGS sheet columns: Name, phone, date, machine, 会社名, メールアドレス, 顧客ID
 
 # Output Style
-- Polite and concise Japanese
+- **Concise and direct Japanese (no verbose explanations)**
 - One question at a time, stepwise collection
 - Show choices only at the confirmation step
+- Keep all responses brief and to the point
 
 # Data Flow
 - Maintain customerId consistency throughout
