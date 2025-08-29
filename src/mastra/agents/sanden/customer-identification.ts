@@ -4,8 +4,7 @@ import { bedrock } from "@ai-sdk/amazon-bedrock";
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 // Removed unused imports to prevent conflicts
-import { delegateTo } from "../../tools/sanden/orchestrator-tools.js";
-import { hybridLookupCustomerByDetails, hybridRegisterCustomer } from "../../tools/sanden/hybrid-customer-tools.js";
+import { hybridLookupCustomerByDetails, hybridRegisterCustomer, hybridGetRepairsByCustomerId, hybridGetProductsByCustomerId } from "../../tools/sanden/hybrid-customer-tools.js";
 import { readFileSync } from 'fs';
 import { join } from 'path';
 
@@ -36,6 +35,8 @@ async function createCustomerIdentificationAgent(): Promise<Agent> {
       // Hybrid tools (Zapier first, local fallback)
       hybridLookupCustomerByDetails,
       hybridRegisterCustomer,
+      hybridGetRepairsByCustomerId,
+      hybridGetProductsByCustomerId,
       // Simple input validation without external calls
       sanitizeInput: createTool({
         id: "sanitizeInput",
@@ -79,8 +80,7 @@ async function createCustomerIdentificationAgent(): Promise<Agent> {
           };
         },
       }),
-      // Only essential tools for customer identification
-      delegateTo,
+      // All tools needed for complete repair workflow
     },
     memory: new Memory(),
   });
