@@ -251,7 +251,7 @@ export const hybridGetProductsByCustomerId = createTool({
         instructions: `Get all products for customer ID: ${customerId}`,
         worksheet: "Products",
         row_count: "20", // Zapier expects string
-        lookup_key: "顧客ID",
+        lookup_key: "COL$A", // Use exact column reference for 顧客ID
         lookup_value: customerId,
       });
       
@@ -342,7 +342,7 @@ export const hybridGetRepairsByCustomerId = createTool({
         instructions: `Get all repairs for customer ID: ${customerId}`,
         worksheet: "repairs",
         row_count: "50", // Zapier expects string
-        lookup_key: "顧客ID",
+        lookup_key: "COL$A", // Use exact column reference for 顧客ID
         lookup_value: customerId,
       });
       
