@@ -1,44 +1,31 @@
 import { Agent } from "@mastra/core/agent";
 import { Memory } from "@mastra/memory";
 import { bedrock } from "@ai-sdk/amazon-bedrock";
-import { customerTools } from "../../tools/sanden/customer-tools.js";
-import { commonTools } from "../../tools/sanden/common-tools.js";
-import { orchestratorTools } from "../../tools/sanden/orchestrator-tools.js";
-import { repairTools } from "../../tools/sanden/repair-tools.js";
-import { readFileSync } from 'fs';
-import { join } from 'path';
+import { hybridGetRepairsByCustomerId, hybridGetProductsByCustomerId } from "../../tools/sanden/hybrid-customer-tools.js";
+import { loadLangfusePrompt } from "../../prompts/langfuse.js";
 
-// Agent factory function
-async function createRepairHistoryTicketAgent(): Promise<Agent> {
-  console.log("🔍 Creating Repair History & Ticket Agent...");
-  
-  // Load hardcoded prompt from file
-  let instructions = "";
+export async function createRepairHistoryTicketAgent() {
+  console.log("🔍 Creating Repair History Ticket Agent...");
   try {
-    const promptPath = join(process.cwd(), 'src/mastra/prompts/repair-history-ticket-prompt.txt');
-    instructions = readFileSync(promptPath, 'utf8').trim();
-    console.log(`✅ Successfully loaded hardcoded instructions (length: ${instructions.length})`);
+    const instructions = await loadLangfusePrompt("repair-history-ticket");
+    if (!instructions || !instructions.trim()) {
+      throw new Error("Failed to load repair-history-ticket prompt from Langfuse");
+    }
+    console.log(`✅ Successfully loaded repair-history-ticket prompt from Langfuse (length: ${instructions.length})`);
+    const agent = new Agent({
+      name: "repair-history-ticket-agent",
+      instructions: instructions,
+      model: bedrock("anthropic.claude-3-haiku-20240307-v1:0"),
+      memory: new Memory(),
+      tools: [
+        hybridGetRepairsByCustomerId,
+        hybridGetProductsByCustomerId,
+      ],
+    });
+    console.log(`✅ Repair History Ticket Agent created with Langfuse instructions length: ${instructions.length}`);
+    return agent;
   } catch (error) {
-    console.error("❌ Failed to load hardcoded prompt:", error);
-    throw new Error("Failed to load repair-history-ticket-prompt.txt");
+    console.error("❌ Failed to create repair history ticket agent:", error);
+    throw error;
   }
-  
-  // Create agent with loaded instructions
-  const agent = new Agent({ 
-    name: "repair-history-ticket-agent",
-    description: "サンデン・リテールシステム修理履歴・新規チケットエージェント",
-    instructions: instructions,
-    model: bedrock("anthropic.claude-3-5-sonnet-20240620-v1:0"),
-    tools: {
-      ...customerTools,
-      ...commonTools,
-      ...orchestratorTools,
-      ...repairTools,
-    },
-  });
-
-  console.log("✅ Repair History & Ticket Agent created with instructions length:", instructions.length);
-  return agent;
 }
-
-export { createRepairHistoryTicketAgent };

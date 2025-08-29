@@ -1,89 +1,32 @@
 import { Agent } from "@mastra/core/agent";
 import { Memory } from "@mastra/memory";
 import { bedrock } from "@ai-sdk/amazon-bedrock";
-import { 
-  delegateTo, 
-  escalateToHuman, 
-  validateContext, 
-  updateWorkflowState,
-  getWorkflowState, 
-  logCustomerData,
-  lookupCustomerFromDatabase
-} from "../../tools/sanden/orchestrator-tools.js";
-import { 
-  updateCustomer, 
-  getCustomerHistory
-} from "../../tools/sanden/customer-tools.js";
-import { 
-  createProductTool, 
-  updateProductTool, 
-  searchProductsTool, 
-  checkWarrantyStatusTool
-} from "../../tools/sanden/product-tools.js";
-import { 
-  hybridGetProductsByCustomerId,
-  hybridGetRepairsByCustomerId,
-  hybridLookupCustomerByDetails,
-  hybridCreateLogEntry
-} from "../../tools/sanden/hybrid-customer-tools.js";
-import { 
-  createRepairTool, 
-  updateRepairTool, 
-  getRepairStatusTool 
-} from "../../tools/sanden/repair-tools.js";
-import { readFileSync } from 'fs';
-import { join } from 'path';
+import { hybridGetRepairsByCustomerId, hybridGetProductsByCustomerId, hybridCreateLogEntry } from "../../tools/sanden/hybrid-customer-tools.js";
+import { loadLangfusePrompt } from "../../prompts/langfuse.js";
 
-// Agent factory function
-async function createRepairAgent(): Promise<Agent> {
+export async function createRepairAgent() {
   console.log("🔍 Creating Repair Agent...");
-  
-  // Load hardcoded prompt from file
-  let instructions = "";
   try {
-    const promptPath = join(process.cwd(), 'src/mastra/prompts/repair-agent-prompt.txt');
-    instructions = readFileSync(promptPath, 'utf8').trim();
-    console.log(`✅ Successfully loaded repair agent instructions (length: ${instructions.length})`);
+    const instructions = await loadLangfusePrompt("repair-agent");
+    if (!instructions || !instructions.trim()) {
+      throw new Error("Failed to load repair-agent prompt from Langfuse");
+    }
+    console.log(`✅ Successfully loaded repair-agent prompt from Langfuse (length: ${instructions.length})`);
+    const agent = new Agent({
+      name: "repair-agent",
+      instructions: instructions,
+      model: bedrock("anthropic.claude-3-haiku-20240307-v1:0"),
+      memory: new Memory(),
+      tools: [
+        hybridGetRepairsByCustomerId,
+        hybridGetProductsByCustomerId,
+        hybridCreateLogEntry,
+      ],
+    });
+    console.log(`✅ Repair Agent created with Langfuse instructions length: ${instructions.length}`);
+    return agent;
   } catch (error) {
-    console.error("❌ Failed to load repair agent prompt:", error);
-    throw new Error("Failed to load repair-agent-prompt.txt");
+    console.error("❌ Failed to create repair agent:", error);
+    throw error;
   }
-  
-  console.log(`✅ Using repair agent instructions (length: ${instructions.length})`);
-  
-  // Create agent with plain text output for Mastra streaming
-  const agent = new Agent({ 
-    name: "repair-agent",
-    description: "サンデン・リテールシステム修理エージェント",
-    instructions: instructions,
-    model: bedrock("anthropic.claude-3-5-sonnet-20240620-v1:0"),
-    tools: {
-      delegateTo,
-      escalateToHuman,
-      validateContext,
-      updateWorkflowState,
-      getWorkflowState,
-      logCustomerData,
-      // Hybrid tools for real data
-      hybridLookupCustomerByDetails,
-      hybridGetProductsByCustomerId,
-      hybridGetRepairsByCustomerId,
-      hybridCreateLogEntry,
-      // Legacy tools (keep for compatibility)
-      updateCustomer,
-      getCustomerHistory,
-      createProductTool,
-      updateProductTool,
-      searchProductsTool,
-      checkWarrantyStatusTool,
-      createRepairTool,
-      updateRepairTool,
-      getRepairStatusTool,
-    },
-  });
-
-  console.log("✅ Repair Agent created with instructions length:", instructions.length);
-  return agent;
 }
-
-export { createRepairAgent };

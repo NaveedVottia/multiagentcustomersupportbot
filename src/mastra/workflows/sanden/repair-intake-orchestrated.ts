@@ -168,7 +168,7 @@ const customerIdentificationStep = createStep({
         step: "customer-identification",
         status: "continue_workflow" as const,
         nextStep: "customer-identification-agent",
-        currentAgent: "routing-agent-customer-identification",
+        currentAgent: "customer-identification",
       };
     } catch (error: any) {
       console.error("❌ Customer identification error:", error);

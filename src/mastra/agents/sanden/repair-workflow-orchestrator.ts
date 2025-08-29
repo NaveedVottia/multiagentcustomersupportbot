@@ -1,102 +1,33 @@
 import { Agent } from "@mastra/core/agent";
 import { Memory } from "@mastra/memory";
 import { bedrock } from "@ai-sdk/amazon-bedrock";
-import { 
-  escalateToHuman, 
-  validateContext, 
-  updateWorkflowState, 
-  logCustomerData, 
-  lookupCustomerFromDatabase,
-  openUrl
-} from "../../tools/sanden/orchestrator-tools.js";
-import { 
-  updateCustomer, 
-  getCustomerHistory,
-  customerTools
-} from "../../tools/sanden/customer-tools.js";
-import { 
-  hybridLookupCustomerByDetails,
-  hybridGetRepairsByCustomerId,
-  hybridGetProductsByCustomerId
-} from "../../tools/sanden/hybrid-customer-tools.js";
-import { 
-  createProductTool, 
-  updateProductTool, 
-  searchProductsTool, 
-  checkWarrantyStatusTool 
-} from "../../tools/sanden/product-tools.js";
-import { 
-  createRepairTool, 
-  updateRepairTool, 
-  getRepairStatusTool 
-} from "../../tools/sanden/repair-tools.js";
-import { 
-  schedulingTools 
-} from "../../tools/sanden/scheduling-tools.js";
-import { 
-  validateSession, 
-  getSystemInfo, 
-  getHelp, 
-  zapierAiQuery 
-} from "../../tools/sanden/common-tools.js";
-// OTP tools removed - using direct customer identification workflow
-import { readFileSync } from 'fs';
-import { join } from 'path';
+import { hybridLookupCustomerByDetails, hybridGetRepairsByCustomerId, hybridGetProductsByCustomerId, hybridCreateLogEntry } from "../../tools/sanden/hybrid-customer-tools.js";
+import { loadLangfusePrompt } from "../../prompts/langfuse.js";
 
-// Agent factory function
-async function createRepairWorkflowOrchestrator(): Promise<Agent> {
-  console.log("🔍 Creating Repair Workflow Orchestrator Agent...");
-  
-    // Load hardcoded prompt from file
-  let instructions = "";
+export async function createRepairWorkflowOrchestrator() {
+  console.log("🔍 Creating Repair Workflow Orchestrator...");
   try {
-    const promptPath = join(process.cwd(), 'src/mastra/prompts/orchestrator-prompt.txt');
-    instructions = readFileSync(promptPath, 'utf8').trim();
-    console.log(`✅ Successfully loaded hardcoded instructions (length: ${instructions.length})`);
+    const instructions = await loadLangfusePrompt("orchestrator");
+    if (!instructions || !instructions.trim()) {
+      throw new Error("Failed to load orchestrator prompt from Langfuse");
+    }
+    console.log(`✅ Successfully loaded orchestrator prompt from Langfuse (length: ${instructions.length})`);
+    const agent = new Agent({
+      name: "orchestrator",
+      instructions: instructions,
+      model: bedrock("anthropic.claude-3-haiku-20240307-v1:0"),
+      memory: new Memory(),
+      tools: [
+        hybridLookupCustomerByDetails,
+        hybridGetRepairsByCustomerId,
+        hybridGetProductsByCustomerId,
+        hybridCreateLogEntry,
+      ],
+    });
+    console.log(`✅ Repair Workflow Orchestrator created with Langfuse instructions length: ${instructions.length}`);
+    return agent;
   } catch (error) {
-    console.error("❌ Failed to load hardcoded prompt:", error);
-    throw new Error("Failed to load orchestrator-prompt.txt");
+    console.error("❌ Failed to create repair workflow orchestrator:", error);
+    throw error;
   }
-  
-  console.log(`✅ Using hardcoded instructions (length: ${instructions.length})`);
-  
-  // Create agent with loaded instructions
-  const agent = new Agent({ 
-    name: "repair-workflow-orchestrator",
-    description: "サンデン・リテールシステム修理受付オーケストレーター",
-    instructions: instructions,
-    model: bedrock("anthropic.claude-3-5-sonnet-20240620-v1:0"),
-    tools: {
-      openUrl,
-      validateContext,
-      updateWorkflowState,
-      logCustomerData,
-      lookupCustomerFromDatabase,
-      // Hybrid tools for proper customer identification and data retrieval
-      hybridLookupCustomerByDetails,
-      hybridGetRepairsByCustomerId,
-      hybridGetProductsByCustomerId,
-      createProductTool,
-      updateProductTool,
-      searchProductsTool,
-      checkWarrantyStatusTool,
-      createRepairTool,
-      updateRepairTool,
-      getRepairStatusTool,
-      schedulingTools,
-      validateSession,
-      getSystemInfo,
-      getHelp,
-      zapierAiQuery,
-      // OTP tools removed
-      ...customerTools
-    },
-    memory: new Memory(),
-  });
-
-  console.log("✅ Repair Workflow Orchestrator Agent created with instructions length:", instructions.length);
-
-  return agent;
 }
-
-export { createRepairWorkflowOrchestrator };

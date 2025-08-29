@@ -9,7 +9,10 @@ import { langfuse, type SessionData, type EvaluationScore } from "./integrations
 // Load environment variables from server.env
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-dotenv.config({ path: path.resolve(__dirname, "../..", "server.env") });
+// Fix path for both development and production builds
+const envPath = path.resolve(process.cwd(), "server.env");
+dotenv.config({ path: envPath });
+console.log(`🔧 Loading environment from: ${envPath}`);
 
 // Log environment variable status for debugging
 console.log("🔍 Environment Variables Status:");
@@ -18,6 +21,9 @@ console.log("LANGFUSE_PUBLIC_KEY:", process.env.LANGFUSE_PUBLIC_KEY ? "✅ Set" 
 console.log("LANGFUSE_SECRET_KEY:", process.env.LANGFUSE_SECRET_KEY ? "✅ Set" : "❌ Missing");
 console.log("ZAPIER_MCP_URL:", process.env.ZAPIER_MCP_URL ? "✅ Set" : "❌ Missing");
 console.log("ZAPIER_MCP:", process.env.ZAPIER_MCP ? "✅ Set" : "❌ Missing");
+console.log("AWS_REGION:", process.env.AWS_REGION ? "✅ Set" : "❌ Missing");
+console.log("AWS_ACCESS_KEY_ID:", process.env.AWS_ACCESS_KEY_ID ? "✅ Set" : "❌ Missing");
+console.log("AWS_SECRET_ACCESS_KEY:", process.env.AWS_SECRET_ACCESS_KEY ? "✅ Set" : "❌ Missing");
 
 const app = express();
 
@@ -112,7 +118,7 @@ app.get("/health", async (req: Request, res: Response) => {
       
       if (mastraInstance.getAgentById) {
         // Try to get agents by known IDs (matching the actual registered agent IDs)
-        const knownAgents = ["repair-workflow-orchestrator", "routing-agent-customer-identification", "repair-agent", "repair-history-ticket-agent", "repair-scheduling-agent"];
+        const knownAgents = ["orchestrator", "customer-identification", "repair-agent", "repair-history-ticket-agent", "repair-scheduling-agent"];
         console.log("Trying known agent IDs:", knownAgents);
         
         for (const id of knownAgents) {
@@ -668,10 +674,10 @@ app.post("/api/agents/repair-workflow-orchestrator/stream", async (req: Request,
     const sessionId = req.headers['x-session-id'] as string || `session_${Date.now()}_${Math.random().toString(36).slice(2)}`;
     
     // Use customer identification agent directly for the complete workflow
-    const agent = await getOrCreateAgent(sessionId, "routing-agent-customer-identification");
+    const agent = await getOrCreateAgent(sessionId, "customer-identification");
     
     if (!agent) {
-      return res.status(500).json({ error: "Agent 'routing-agent-customer-identification' not found" });
+      return res.status(500).json({ error: "Agent 'customer-identification' not found" });
     }
 
     console.log(`🔍 Processing request with ${messages.length} messages for session ${sessionId}`);
@@ -683,7 +689,7 @@ app.post("/api/agents/repair-workflow-orchestrator/stream", async (req: Request,
     
     // Start a trace for this request
     const traceId = await langfuse.startTrace("customer-identification-workflow", {
-      endpoint: "/api/agents/repair-workflow-orchestrator/stream",
+              endpoint: "/api/agents/repair-workflow-orchestrator/stream",
       messageCount: messages.length,
       sessionId: currentSession?.sessionId,
       userId: currentSession?.userId
@@ -772,13 +778,13 @@ app.post("/api/agents/repair-workflow-orchestrator/stream", async (req: Request,
     res.end();
     
   } catch (error: unknown) {
-    console.error("❌ [Endpoint] /repair-workflow-orchestrator/stream error:", error);
+          console.error("❌ [Endpoint] /orchestrator/stream error:", error);
     const message = error instanceof Error ? error.message : "Internal server error";
     
     // Log error in trace if we have one
     const currentSession = langfuse.getCurrentSession();
     if (currentSession) {
-      await langfuse.logToolExecution(null, "repair-workflow-orchestrator-error", {
+              await langfuse.logToolExecution(null, "repair-workflow-orchestrator-error", {
         error: message,
         sessionId: currentSession.sessionId
       }, {
@@ -835,7 +841,7 @@ app.post("/api/agents/direct-agent/stream", async (req: Request, res: Response) 
 app.post("/api/agents/customerIdentification/stream", async (req: Request, res: Response) => {
   try {
     const messages = Array.isArray(req.body?.messages) ? req.body.messages : [];
-    const agent = await getAgentById("routing-agent-customer-identification");
+    const agent = await getAgentById("customer-identification");
     
     if (!agent) {
       return res.status(500).json({ error: "Customer identification agent not found" });
@@ -912,85 +918,9 @@ app.post("/api/agents/productSelection/stream", async (req: Request, res: Respon
   }
 });
 
-app.post("/api/agents/issueAnalysis/stream", async (req: Request, res: Response) => {
-  try {
-    const messages = Array.isArray(req.body?.messages) ? req.body.messages : [];
-    const agent = await getAgentById("repair-qa-agent-issue-analysis");
-    
-    if (!agent) {
-      return res.status(500).json({ error: "Issue analysis agent not found" });
-    }
 
-    // Set headers for streaming response
-    prepareStreamHeaders(res, req);
 
-    // Execute the agent using Mastra's stream method
-    const stream = await agent.stream(messages);
-    
-    // Generate a unique message ID
-    const messageId = `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-    
-    // Send the message ID first
-    writeMessageId(res, messageId);
-    
-    // Send processing indicator immediately
-    writeProcessingIndicator(res, "ja");
-    
-    // Stream using Mastra-compliant helper (0:"..." lines)
-    const fullTextLength = await streamMastraResponse(stream, res);
-    
-    // Send finish metadata
-    writeFinish(res, fullTextLength);
-    
-    console.log(`✅ Response complete, length: ${fullTextLength} characters`);
-    res.end();
-    
-  } catch (error: unknown) {
-    console.error("❌ [Endpoint] /issueAnalysis/stream error:", error);
-    const message = error instanceof Error ? error.message : "Internal server error";
-    return res.status(500).json({ error: message });
-  }
-});
 
-app.post("/api/agents/visitConfirmation/stream", async (req: Request, res: Response) => {
-  try {
-    const messages = Array.isArray(req.body?.messages) ? req.body.messages : [];
-    const agent = await getAgentById("repair-visit-confirmation-agent");
-    
-    if (!agent) {
-      return res.status(500).json({ error: "Visit confirmation agent not found" });
-    }
-
-    // Set headers for streaming response
-    prepareStreamHeaders(res, req);
-
-    // Execute the agent using Mastra's stream method
-    const stream = await agent.stream(messages);
-    
-    // Generate a unique message ID
-    const messageId = `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-    
-    // Send the message ID first
-    writeMessageId(res, messageId);
-    
-    // Send processing indicator immediately
-    writeProcessingIndicator(res, "ja");
-    
-    // Stream using Mastra-compliant helper (0:"..." lines)
-    const fullTextLength = await streamMastraResponse(stream, res);
-    
-    // Send finish metadata
-    writeFinish(res, fullTextLength, 0); // No prompt tokens for visit confirmation
-    
-    console.log(`✅ Response complete, length: ${fullTextLength} characters`);
-    res.end();
-    
-  } catch (error: unknown) {
-    console.error("❌ [Endpoint] /visitConfirmation/stream error:", error);
-    const message = error instanceof Error ? error.message : "Internal server error";
-    return res.status(500).json({ error: message });
-  }
-});
 
 app.post("/api/agents/repair-history-ticket/stream", async (req: Request, res: Response) => {
   try {
@@ -1138,7 +1068,7 @@ app.get("/debug/agents/:agentId", async (req: Request, res: Response) => {
         return res.status(404).json({
           error: "Agent not found",
           agentId,
-          availableAgents: ["repair-workflow-orchestrator", "routing-agent-customer-identification", "repair-history-ticket-agent", "repair-scheduling-agent"],
+          availableAgents: ["orchestrator", "customer-identification", "repair-history-ticket-agent", "repair-scheduling-agent"],
           hasGetAgentById: !!mastraInstance.getAgentById
         });
       }
@@ -1146,7 +1076,7 @@ app.get("/debug/agents/:agentId", async (req: Request, res: Response) => {
       return res.status(500).json({
         error: "Mastra instance not properly initialized",
         agentId,
-        availableAgents: ["repair-workflow-orchestrator", "routing-agent-customer-identification", "repair-history-ticket-agent", "repair-scheduling-agent"],
+        availableAgents: ["orchestrator", "customer-identification", "repair-history-ticket-agent", "repair-scheduling-agent"],
         hasGetAgentById: !!mastraInstance.getAgentById
       });
     }
@@ -1207,6 +1137,47 @@ app.get("/debug/agents/:agentId/instructions", async (req: Request, res: Respons
       success: false, 
       error: error instanceof Error ? error.message : "Unknown error",
       agentId: req.params.agentId
+    });
+  }
+});
+
+// Debug endpoint to check agent content
+app.get("/api/debug/agent/:agentId", async (req: Request, res: Response) => {
+  try {
+    const agentId = req.params.agentId;
+    console.log(`🔍 Debug: Checking agent content for: ${agentId}`);
+    
+    const mastraInstance = await mastra;
+    const agent = mastraInstance.getAgentById(agentId);
+    
+    if (!agent) {
+      return res.status(404).json({ error: `Agent ${agentId} not found` });
+    }
+    
+    // Check agent properties
+    const agentInfo = {
+      name: agent.name,
+              description: agent.getDescription(),
+      instructions: agent.instructions,
+      instructionsLength: typeof agent.instructions === 'string' ? agent.instructions.length : 'Not a string',
+      instructionsType: typeof agent.instructions,
+      tools: agent.tools ? Object.keys(agent.tools) : 'No tools',
+      model: agent.model ? 'Model configured' : 'No model'
+    };
+    
+    console.log(`📋 Agent info for ${agentId}:`, agentInfo);
+    
+    res.json({
+      success: true,
+      agentId,
+      agentInfo
+    });
+    
+  } catch (error) {
+    console.error("❌ Agent debug failed:", error);
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : "Unknown error"
     });
   }
 });
@@ -1566,10 +1537,10 @@ const port = process.env.NODE_ENV === 'production' ? 80 : 3000;
 const server = app.listen(port, () => {
   console.log("🚀 Mastra server started successfully!");
   console.log(`🌐 Server running on port ${port} (configured in Lightsail firewall)`);
-  console.log(`🔗 Main endpoint: POST /api/agents/repair-workflow-orchestrator/stream`);
+      console.log(`🔗 Main endpoint: POST /api/agents/repair-workflow-orchestrator/stream`);
   console.log(`🔗 Alternative endpoint: POST /api/agents/direct-agent/stream`);
   console.log(`🔗 Individual agent endpoints:`);
-  console.log(`   - POST /api/agents/customerIdentification/stream`);
+  console.log(`   - POST /api/agents/customer-identification/stream`);
   console.log(`   - POST /api/agents/repair-history-ticket/stream`);
   console.log(`   - POST /api/agents/repair-scheduling/stream`);
   console.log(`🔗 Health check: GET /health`);

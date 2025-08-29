@@ -57,7 +57,7 @@ export const delegateTo = createTool({
   async execute(args: ToolExecuteArgs) {
     const { mastra } = args as any;
     const parsed = getArgs(args) as { agentId?: string; message?: string; context?: Record<string, any> };
-    const agentId = parsed.agentId || "routing-agent-customer-identification";
+    const agentId = parsed.agentId || "customer-identification";
     const agentContext = parsed.context;
     const message = parsed.message || "顧客情報の確認をお願いします。";
     const traceId = await langfuse.startTrace("tool.delegateTo", { agentId, hasContext: !!agentContext });
@@ -72,7 +72,7 @@ export const delegateTo = createTool({
       const generated = await agent.generate(messages as any);
       const fullResponse = typeof generated?.text === "string" ? generated.text : "";
       let extractedData = null;
-      if (agentId === "routing-agent-customer-identification") extractedData = extractDataFromResponse(fullResponse, "CUSTOMER");
+      if (agentId === "customer-identification") extractedData = extractDataFromResponse(fullResponse, "CUSTOMER");
       else if (agentId === "repair-agent") extractedData = extractDataFromResponse(fullResponse, "PRODUCT");
       else if (agentId === "repair-history-ticket-agent") extractedData = extractDataFromResponse(fullResponse, "ISSUE");
       else if (agentId === "repair-scheduling-agent") extractedData = extractDataFromResponse(fullResponse, "REPAIR");

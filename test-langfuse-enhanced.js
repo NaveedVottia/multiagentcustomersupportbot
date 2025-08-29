@@ -5,7 +5,7 @@
  * Tests sessions, user tracking, and evaluations
  */
 
-const BASE_URL = 'http://localhost:3000';
+const BASE_URL = 'http://localhost:80';
 
 async function testEndpoint(endpoint, method = 'GET', body = null, headers = {}) {
   try {
