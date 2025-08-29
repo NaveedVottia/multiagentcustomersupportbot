@@ -16,6 +16,11 @@ import {
   customerTools
 } from "../../tools/sanden/customer-tools.js";
 import { 
+  hybridLookupCustomerByDetails,
+  hybridGetRepairsByCustomerId,
+  hybridGetProductsByCustomerId
+} from "../../tools/sanden/hybrid-customer-tools.js";
+import { 
   createProductTool, 
   updateProductTool, 
   searchProductsTool, 
@@ -69,6 +74,10 @@ async function createRepairWorkflowOrchestrator(): Promise<Agent> {
       updateWorkflowState,
       logCustomerData,
       lookupCustomerFromDatabase,
+      // Hybrid tools for proper customer identification and data retrieval
+      hybridLookupCustomerByDetails,
+      hybridGetRepairsByCustomerId,
+      hybridGetProductsByCustomerId,
       createProductTool,
       updateProductTool,
       searchProductsTool,
