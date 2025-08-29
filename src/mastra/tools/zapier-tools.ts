@@ -1,4 +1,4 @@
-import { zapierMcp } from "../../integrations/zapier-mcp";
+import { zapierMcp } from "../../integrations/zapier-mcp.js";
 
 // Google Sheets Tools
 export const googleSheetsLookupRows = async (params: {

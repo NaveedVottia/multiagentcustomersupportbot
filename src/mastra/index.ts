@@ -12,39 +12,52 @@ dotenv.config({ path: path.resolve(__dirname, "../..", "server.env") });
 
 console.log("🔍 Loading environment variables for Mastra agents...");
 console.log("LANGFUSE_HOST:", process.env.LANGFUSE_HOST ? "✅ Set" : "❌ Missing");
-console.log("LANGFUSE_PUBLIC_KEY:", process.env.LANGFUSE_PUBLIC_KEY ? "✅ Set" : "❌ Missing");
+console.log("LANGFUSE_PUBLIC_KEY:", process.env.LANGFUSE_SECRET_KEY ? "✅ Set" : "❌ Missing");
 console.log("LANGFUSE_SECRET_KEY:", process.env.LANGFUSE_SECRET_KEY ? "✅ Set" : "❌ Missing");
 
 // Import agent factories
-import { createWorkingOrchestratorAgent } from "./agents/sanden/working-orchestrator";
-import { routingAgentCustomerIdentification } from "./agents/sanden/customer-identification";
-import { repairAgentProductSelection } from "./agents/sanden/product-selection";
-import { repairQaAgentIssueAnalysis } from "./agents/sanden/issue-analysis";
-import { repairVisitConfirmationAgent } from "./agents/sanden/visit-confirmation";
+import { createRepairWorkflowOrchestrator } from "./agents/sanden/working-orchestrator.js";
+import { createCustomerIdentificationAgent } from "./agents/sanden/customer-identification.js";
+import { createRepairAgent } from "./agents/sanden/repair-agent.js";
+import { createRepairHistoryTicketAgent } from "./agents/sanden/repair-history-ticket-agent.js";
+import { createRepairSchedulingAgent } from "./agents/sanden/repair-scheduling-agent.js";
 
 // Import the setter for Mastra instance
-import { setMastraInstance } from "./tools/sanden/orchestrator-tools";
+import { setMastraInstance } from "./tools/sanden/orchestrator-tools.js";
 
 // Agent initialization function
 async function initializeAgents() {
   console.log("🚀 Initializing Mastra agents...");
   
   try {
-    // Create the main orchestrator agent with proper prompt loading
-    const workingOrchestratorAgent = await createWorkingOrchestratorAgent();
-    console.log("✅ Working Orchestrator Agent initialized");
+    // Create the repair workflow orchestrator agent (unified entry point)
+    const repairWorkflowOrchestratorAgent = await createRepairWorkflowOrchestrator();
+    console.log("✅ Repair Workflow Orchestrator Agent initialized");
+    
+    // Create sub-agents
+    const customerIdentificationAgent = await createCustomerIdentificationAgent();
+    console.log("✅ Customer Identification Agent initialized");
+    
+    const repairAgent = await createRepairAgent();
+    console.log("✅ Repair Agent initialized");
+    
+    const repairHistoryTicketAgent = await createRepairHistoryTicketAgent();
+    console.log("✅ Repair History & Ticket Agent initialized");
+    
+    const repairSchedulingAgent = await createRepairSchedulingAgent();
+    console.log("✅ Repair Scheduling Agent initialized");
     
     // Create Mastra instance with all agents
     const mastraInstance = new Mastra({
       agents: {
-        // Main orchestrator agent - this is what the UI expects
-        "repair-workflow-orchestrator": workingOrchestratorAgent,
+        // Unified repair workflow orchestrator - this is the main entry point
+        "repair-workflow-orchestrator": repairWorkflowOrchestratorAgent,
         
         // Sub-agents (accessed internally by orchestrator via delegateTo tool)
-        "routing-agent-customer-identification": routingAgentCustomerIdentification,
-        "repair-agent-product-selection": repairAgentProductSelection,
-        "repair-qa-agent-issue-analysis": repairQaAgentIssueAnalysis,
-        "repair-visit-confirmation-agent": repairVisitConfirmationAgent,
+        "routing-agent-customer-identification": customerIdentificationAgent,
+        "repair-agent": repairAgent,
+        "repair-history-ticket-agent": repairHistoryTicketAgent,
+        "repair-scheduling-agent": repairSchedulingAgent,
       },
       
       storage: new LibSQLStore({
@@ -60,19 +73,28 @@ async function initializeAgents() {
     // Set the Mastra instance for tools to use
     setMastraInstance(mastraInstance);
 
-    console.log("✅ Mastra instance created with 5 agents");
+    console.log("✅ Mastra instance created with 4 agents");
     console.log("✅ Main endpoint: POST /api/agents/repair-workflow-orchestrator/stream");
-    console.log("✅ Repair workflow orchestrator ready");
+    console.log("✅ Repair workflow orchestrator ready (unified entry point)");
 
     // Test the connection using the correct v0.13.2 API
     if (mastraInstance.getAgentById("repair-workflow-orchestrator")) {
       console.log("✅ Repair workflow orchestrator verified");
     }
+    if (mastraInstance.getAgentById("routing-agent-customer-identification")) {
+      console.log("✅ Customer identification agent verified");
+    }
+    if (mastraInstance.getAgentById("repair-history-ticket-agent")) {
+      console.log("✅ Repair history & ticket agent verified");
+    }
+    if (mastraInstance.getAgentById("repair-scheduling-agent")) {
+      console.log("✅ Repair scheduling agent verified");
+    }
 
     // Debug: Check what agents are actually available
     console.log("🔍 Debug: Available agents in Mastra instance:");
     console.log("mastra.getAgentById available:", typeof mastraInstance.getAgentById === 'function');
-    console.log("Agent count: 5 (hardcoded)");
+    console.log("Agent count: 4 (1 orchestrator + 3 workflow agents)");
 
     return mastraInstance;
   } catch (error) {

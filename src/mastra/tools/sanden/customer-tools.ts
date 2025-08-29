@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { createTool } from "@mastra/core/tools";
-import { zapierMcp } from "../../../integrations/zapier-mcp";
+import { zapierMcp } from "../../../integrations/zapier-mcp.js";
 
 function mapLookupKey(worksheet: string, key: string): string {
   if (worksheet === "Customers") {
@@ -792,4 +792,88 @@ export const customerTools = {
   updateCustomer,
   deleteCustomer,
   getCustomerHistory,
+
+  // Customer registration tool
+  registerCustomer: createTool({
+    id: "registerCustomer",
+    description: "Register a new customer in the system",
+    inputSchema: z.object({
+      companyName: z.string().describe("Company name"),
+      email: z.string().email().optional().describe("Email address"),
+      phone: z.string().describe("Phone number"),
+      location: z.string().optional().describe("Location/address"),
+      customerId: z.string().optional().describe("Custom customer ID (optional)")
+    }),
+    execute: async ({ context }: { context: any }) => {
+      const { companyName, email, phone, location, customerId } = context;
+      
+      try {
+        // Generate customer ID if not provided
+        const finalCustomerId = customerId || `CUST_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        
+        // Check if customer already exists
+        const existingCustomers = await mcpLookupRows("Customers", "電話番号", phone);
+        if (existingCustomers.length > 0) {
+          return {
+            success: false,
+            message: "この電話番号で登録済みのお客様が存在します。",
+            existingCustomerId: existingCustomers[0]["顧客ID"]
+          };
+        }
+
+        if (email) {
+          const existingByEmail = await mcpLookupRows("Customers", "メールアドレス", email);
+          if (existingByEmail.length > 0) {
+            return {
+              success: false,
+              message: "このメールアドレスで登録済みのお客様が存在します。",
+              existingCustomerId: existingByEmail[0]["顧客ID"]
+            };
+          }
+        }
+
+        // Create new customer record
+        const newCustomerData = {
+          "顧客ID": finalCustomerId,
+          "会社名": companyName,
+          "メールアドレス": email || "",
+          "電話番号": phone,
+          "所在地": location || ""
+        };
+
+        await zapierMcp.callTool("google_sheets_create_spreadsheet_row", {
+          instructions: "Create new customer record",
+          ...newCustomerData
+        });
+
+        // Log the registration
+        await zapierMcp.callTool("google_sheets_create_spreadsheet_row", {
+          instructions: "Log customer registration",
+          Timestamp: new Date().toISOString(),
+          "Repair ID": "",
+          Status: "新規登録",
+          "Customer ID": finalCustomerId,
+          "Product ID": "",
+          "担当者 (Handler)": "AI",
+          Issue: `新規顧客登録: ${companyName}`,
+          Source: "chat",
+          Raw: JSON.stringify(newCustomerData)
+        });
+
+        return {
+          success: true,
+          message: "お客様の登録が完了しました。",
+          customerId: finalCustomerId,
+          data: newCustomerData
+        };
+      } catch (error) {
+        console.error("Customer registration error:", error);
+        return {
+          success: false,
+          message: "顧客登録に失敗しました。",
+          error: error instanceof Error ? error.message : "Unknown error"
+        };
+      }
+    }
+  }),
 };

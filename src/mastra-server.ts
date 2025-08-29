@@ -21,31 +21,36 @@ console.log("ZAPIER_MCP:", process.env.ZAPIER_MCP ? "✅ Set" : "❌ Missing");
 
 const app = express();
 
-// CORS configuration
+// CORS configuration - Allow all origins for Mastra demo
 const corsOptions = {
-  origin: [
-    'https://demo.dev-maestra.vottia.me',
-    'https://mastra.demo.dev-maestra.vottia.me',
-    'http://localhost:3000',
-    'http://localhost:3001'
-  ],
+  origin: function (origin: string | undefined, callback: any) {
+    // Allow requests with no origin (like mobile apps or Postman)
+    if (!origin) return callback(null, true);
+    
+    // Allow all demo.dev-maestra.vottia.me subdomains and localhost
+    const allowedPatterns = [
+      /^https:\/\/.*\.dev-maestra\.vottia\.me$/,
+      /^https:\/\/demo\.dev-maestra\.vottia\.me$/,
+      /^https:\/\/mastra\.demo\.dev-maestra\.vottia\.me$/,
+      /^http:\/\/localhost:\d+$/
+    ];
+    
+    const isAllowed = allowedPatterns.some(pattern => pattern.test(origin));
+    if (isAllowed) {
+      return callback(null, true);
+    }
+    
+    console.log(`🚫 CORS blocked origin: ${origin}`);
+    return callback(new Error('Not allowed by CORS'), false);
+  },
   credentials: true,
-  methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'X-Session-ID', 'X-User-ID', 'Authorization'],
-  exposedHeaders: ["Content-Type", "Cache-Control", "Connection", "X-Accel-Buffering", "X-Session-ID", "X-User-ID"]
+  methods: ['GET', 'POST', 'OPTIONS', 'PUT', 'DELETE'],
+  allowedHeaders: ['Content-Type', 'X-Session-ID', 'X-User-ID', 'Authorization', 'Accept', 'Cache-Control'],
+  exposedHeaders: ["Content-Type", "Cache-Control", "Connection", "X-Accel-Buffering", "X-Session-ID", "X-User-ID"],
+  maxAge: 86400 // 24 hours preflight cache
 };
 
 app.use(cors(corsOptions));
-
-// Global OPTIONS handler for all routes
-app.options('*', (req: Request, res: Response) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Session-ID, X-User-ID, Authorization');
-  res.setHeader('Access-Control-Allow-Credentials', 'true');
-  res.setHeader('Access-Control-Max-Age', '86400');
-  return res.sendStatus(204);
-});
 
 // JSON parsing
 app.use(express.json());
@@ -433,6 +438,66 @@ async function getAgentById(agentId: string) {
   }
 }
 
+// Helper function to remove hidden data blocks from agent responses
+function stripHiddenBlocks(text: string): string {
+  return text
+    .replace(/CUSTOMER_DATA_START[\s\S]*?CUSTOMER_DATA_END/g, '')
+    .replace(/PRODUCT_DATA_START[\s\S]*?PRODUCT_DATA_END/g, '')
+    .replace(/ISSUE_DATA_START[\s\S]*?ISSUE_DATA_END/g, '')
+    .replace(/REPAIR_DATA_START[\s\S]*?REPAIR_DATA_END/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// Helper function to format any message with numbered options
+function formatMenuOutput(text: string): string {
+  // Check if this message contains numbered options (1., 2., 3., etc.)
+  const numberedOptionsPattern = /(\d+\.\s+[^\d]+?)(?=\d+\.|$)/g;
+  const matches = text.match(numberedOptionsPattern);
+  
+  if (matches && matches.length >= 2) {
+    // Extract the text before the first numbered option
+    const firstOptionIndex = text.indexOf(matches[0]);
+    const beforeOptions = text.substring(0, firstOptionIndex).trim();
+    
+    // Special formatting for the main menu
+    if (text.includes('修理受付・修理履歴・修理予約') && 
+        text.includes('一般的なFAQ') && 
+        text.includes('リクエスト送信用オンラインフォーム')) {
+      
+      return `${beforeOptions}
+
+1. 修理受付・修理履歴・修理予約
+
+2. 一般的なFAQ
+
+3. リクエスト送信用オンラインフォーム
+
+番号でお選びください。直接入力も可能です。`;
+    }
+    
+    // For other numbered lists, use clean formatting
+    let formattedText = beforeOptions;
+    
+    matches.forEach((option, index) => {
+      const cleanOption = option.replace(/\s+/g, ' ').trim();
+      formattedText += `\n\n${cleanOption}`;
+    });
+    
+    // Add any text that comes after the last option
+    const lastOption = matches[matches.length - 1];
+    const lastOptionEnd = text.lastIndexOf(lastOption) + lastOption.length;
+    const afterOptions = text.substring(lastOptionEnd).trim();
+    if (afterOptions) {
+      formattedText += `\n\n${afterOptions}`;
+    }
+    
+    return formattedText;
+  }
+  
+  return text;
+}
+
 // Helper function to stream response in Mastra format
 async function streamMastraResponse(stream: any, res: Response): Promise<number> {
   const encodeChunk = (text: string) =>
@@ -453,55 +518,29 @@ async function streamMastraResponse(stream: any, res: Response): Promise<number>
       }
     }
     
-    // Robust JSON parsing with preamble handling
-    let textToStream = "Sorry, an error occurred.";
-    let menuItems: any[] = [];
-
-    try {
-      // 1) try full parse
-      let parsed: any;
-      try { 
-        parsed = JSON.parse(fullResponse); 
-      } catch {
-        // 2) extract first {...} and parse that
-        const jsonSlice = extractFirstJsonObject(fullResponse);
-        if (jsonSlice) parsed = JSON.parse(jsonSlice);
-      }
-
-      if (parsed?.ui?.text) {
-        textToStream = parsed.ui.text;
-        // Remove any processing indicators from the agent response
-        textToStream = textToStream.replace(/^\(処理中\.\.\.\)/, "").replace(/^\(processing\.\.\.\)/, "");
-        textToStream = textToStream.trim();
-        
-        // Add processing indicator at the beginning if needed
-        if (parsed.ui.show_processing || textToStream.length > 0) {
-          textToStream = "(処理中...)" + textToStream;
-        }
-        menuItems = Array.isArray(parsed.ui.menu) ? parsed.ui.menu : [];
-        console.log("✅ Parsed ui from JSON (with extractor)");
-        console.log("📝 Extracted text:", textToStream.substring(0, 100) + "...");
-      } else {
-        console.log("⚠️ No ui.text in parsed JSON");
-        textToStream = "Sorry, unable to process the response.";
-      }
-    } catch {
-      // 3) last resort: raw trimmed (but never the JSON blob)
-      console.log("📝 Falling back to raw response (no valid JSON found)");
-      const withoutBraces = fullResponse.replace(/\{[\s\S]*\}/g, "").trim();
-      textToStream = withoutBraces || "Sorry, unable to process the response.";
+    // Since agents now output plain text only, use the response directly
+    let textToStream = fullResponse.trim();
+    
+    // Remove hidden data blocks that shouldn't be shown to users
+    textToStream = stripHiddenBlocks(textToStream);
+    
+    // Format menu output if it's a menu response
+    textToStream = formatMenuOutput(textToStream);
+    
+    // Fallback if response is empty
+    if (!textToStream || textToStream.length === 0) {
+      textToStream = "申し訳ありませんが、応答を処理できませんでした。";
     }
     
-    // Stream the natural text (not JSON)
+    console.log("✅ Streaming plain text response");
+    console.log("📝 Response text:", textToStream.substring(0, 100) + (textToStream.length > 100 ? "..." : ""));
+    
+    // Stream the text character by character in Mastra format
     totalLength = textToStream.length;
     for (const ch of textToStream) {
       res.write(`0:"${encodeChunk(ch)}"\n`);
     }
-    
-    // Log menu items for debugging (UI can extract these separately)
-    if (menuItems.length > 0) {
-      console.log("📋 Menu items available:", menuItems);
-    }
+
     
   } catch (streamError) {
     console.error("❌ Stream error:", streamError);
@@ -524,12 +563,27 @@ async function streamMastraResponse(stream: any, res: Response): Promise<number>
 }
 
 // Prepare headers for Mastra streaming protocol
-function prepareStreamHeaders(res: Response): void {
+function prepareStreamHeaders(res: Response, req: Request): void {
+  // CORS headers for streaming
+  const origin = req.headers.origin;
+  if (origin && (
+    origin.includes('demo.dev-maestra.vottia.me') || 
+    origin.includes('mastra.demo.dev-maestra.vottia.me') ||
+    origin.includes('localhost')
+  )) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+  }
+  
+  // Streaming headers
   res.setHeader('Content-Type', 'text/plain; charset=utf-8');
   res.setHeader('Cache-Control', 'no-cache, no-transform');
   res.setHeader('Connection', 'keep-alive');
-  // Hint for some proxies (e.g., Nginx) to not buffer
   res.setHeader('X-Accel-Buffering', 'no');
+  
+  // Expose custom headers
+  res.setHeader('Access-Control-Expose-Headers', 'Content-Type,Cache-Control,Connection,X-Accel-Buffering,X-Session-ID,X-User-ID');
+  
   // Flush headers immediately
   try { res.flushHeaders(); } catch {}
 }
@@ -646,7 +700,7 @@ app.post("/api/agents/repair-workflow-orchestrator/stream", async (req: Request,
     const msgForAgent = [contextMsg, ...normalizedMessages];
     
     // Set headers for streaming response
-    prepareStreamHeaders(res);
+    prepareStreamHeaders(res, req);
     
     // Generate a unique message ID
     const messageId = `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
@@ -717,7 +771,7 @@ app.post("/api/agents/direct-agent/stream", async (req: Request, res: Response) 
     }
 
     // Set headers for streaming response
-    prepareStreamHeaders(res);
+    prepareStreamHeaders(res, req);
 
     // Execute the agent using Mastra's stream method
     const stream = await agent.stream(messages);
@@ -757,7 +811,7 @@ app.post("/api/agents/customerIdentification/stream", async (req: Request, res: 
     }
 
     // Set headers for streaming response
-    prepareStreamHeaders(res);
+    prepareStreamHeaders(res, req);
 
     // Execute the agent using Mastra's stream method
     const stream = await agent.stream(messages);
@@ -797,7 +851,7 @@ app.post("/api/agents/productSelection/stream", async (req: Request, res: Respon
     }
 
     // Set headers for streaming response
-    prepareStreamHeaders(res);
+    prepareStreamHeaders(res, req);
 
     // Execute the agent using Mastra's stream method
     const stream = await agent.stream(messages);
@@ -837,7 +891,7 @@ app.post("/api/agents/issueAnalysis/stream", async (req: Request, res: Response)
     }
 
     // Set headers for streaming response
-    prepareStreamHeaders(res);
+    prepareStreamHeaders(res, req);
 
     // Execute the agent using Mastra's stream method
     const stream = await agent.stream(messages);
@@ -877,7 +931,7 @@ app.post("/api/agents/visitConfirmation/stream", async (req: Request, res: Respo
     }
 
     // Set headers for streaming response
-    prepareStreamHeaders(res);
+    prepareStreamHeaders(res, req);
 
     // Execute the agent using Mastra's stream method
     const stream = await agent.stream(messages);
@@ -907,6 +961,86 @@ app.post("/api/agents/visitConfirmation/stream", async (req: Request, res: Respo
   }
 });
 
+app.post("/api/agents/repair-history-ticket/stream", async (req: Request, res: Response) => {
+  try {
+    const messages = Array.isArray(req.body?.messages) ? req.body.messages : [];
+    const agent = await getAgentById("repair-history-ticket-agent");
+    
+    if (!agent) {
+      return res.status(500).json({ error: "Repair history ticket agent not found" });
+    }
+
+    // Set headers for streaming response
+    prepareStreamHeaders(res, req);
+
+    // Execute the agent using Mastra's stream method
+    const stream = await agent.stream(messages);
+    
+    // Generate a unique message ID
+    const messageId = `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    
+    // Send the message ID first
+    writeMessageId(res, messageId);
+    
+    // Send processing indicator immediately
+    writeProcessingIndicator(res, "ja");
+    
+    // Stream using Mastra-compliant helper (0:"..." lines)
+    const fullTextLength = await streamMastraResponse(stream, res);
+    
+    // Send finish metadata
+    writeFinish(res, fullTextLength, 0); // No prompt tokens for repair history ticket
+    
+    console.log(`✅ Response complete, length: ${fullTextLength} characters`);
+    res.end();
+    
+  } catch (error: unknown) {
+    console.error("❌ [Endpoint] /repair-history-ticket/stream error:", error);
+    const message = error instanceof Error ? error.message : "Internal server error";
+    return res.status(500).json({ error: message });
+  }
+});
+
+app.post("/api/agents/repair-scheduling/stream", async (req: Request, res: Response) => {
+  try {
+    const messages = Array.isArray(req.body?.messages) ? req.body.messages : [];
+    const agent = await getAgentById("repair-scheduling-agent");
+    
+    if (!agent) {
+      return res.status(500).json({ error: "Repair scheduling agent not found" });
+    }
+
+    // Set headers for streaming response
+    prepareStreamHeaders(res, req);
+
+    // Execute the agent using Mastra's stream method
+    const stream = await agent.stream(messages);
+    
+    // Generate a unique message ID
+    const messageId = `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    
+    // Send the message ID first
+    writeMessageId(res, messageId);
+    
+    // Send processing indicator immediately
+    writeProcessingIndicator(res, "ja");
+    
+    // Stream using Mastra-compliant helper (0:"..." lines)
+    const fullTextLength = await streamMastraResponse(stream, res);
+    
+    // Send finish metadata
+    writeFinish(res, fullTextLength, 0); // No prompt tokens for repair scheduling
+    
+    console.log(`✅ Response complete, length: ${fullTextLength} characters`);
+    res.end();
+    
+  } catch (error: unknown) {
+    console.error("❌ [Endpoint] /repair-scheduling/stream error:", error);
+    const message = error instanceof Error ? error.message : "Internal server error";
+    return res.status(500).json({ error: message });
+  }
+});
+
 // Debug endpoint to check agent status
 app.get("/debug/agents/:agentId", async (req: Request, res: Response) => {
   try {
@@ -929,7 +1063,7 @@ app.get("/debug/agents/:agentId", async (req: Request, res: Response) => {
         return res.status(404).json({
           error: "Agent not found",
           agentId,
-          availableAgents: ["repair-workflow-orchestrator", "routing-agent-customer-identification", "repair-agent-product-selection", "repair-qa-agent-issue-analysis", "repair-visit-confirmation-agent"],
+          availableAgents: ["repair-workflow-orchestrator", "routing-agent-customer-identification", "repair-history-ticket-agent", "repair-scheduling-agent"],
           hasGetAgentById: !!mastraInstance.getAgentById
         });
       }
@@ -937,7 +1071,7 @@ app.get("/debug/agents/:agentId", async (req: Request, res: Response) => {
       return res.status(500).json({
         error: "Mastra instance not properly initialized",
         agentId,
-        availableAgents: ["repair-workflow-orchestrator", "routing-agent-customer-identification", "repair-agent-product-selection", "repair-qa-agent-issue-analysis", "repair-visit-confirmation-agent"],
+        availableAgents: ["repair-workflow-orchestrator", "routing-agent-customer-identification", "repair-history-ticket-agent", "repair-scheduling-agent"],
         hasGetAgentById: !!mastraInstance.getAgentById
       });
     }
@@ -1012,9 +1146,8 @@ const server = app.listen(port, () => {
   console.log(`🔗 Alternative endpoint: POST /api/agents/direct-agent/stream`);
   console.log(`🔗 Individual agent endpoints:`);
   console.log(`   - POST /api/agents/customerIdentification/stream`);
-  console.log(`   - POST /api/agents/productSelection/stream`);
-  console.log(`   - POST /api/agents/issueAnalysis/stream`);
-  console.log(`   - POST /api/agents/visitConfirmation/stream`);
+  console.log(`   - POST /api/agents/repair-history-ticket/stream`);
+  console.log(`   - POST /api/agents/repair-scheduling/stream`);
   console.log(`🔗 Health check: GET /health`);
   // Note: mastra is now a Promise, so we can't access agents directly here
   console.log(`✅ Mastra instance configured for port ${port}`);

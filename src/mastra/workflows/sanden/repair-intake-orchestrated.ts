@@ -1,6 +1,6 @@
 import { createWorkflow, createStep } from "@mastra/core/workflows";
 import { z } from "zod";
-import { workingOrchestratorAgent } from "../../agents/sanden/working-orchestrator";
+import { workingOrchestratorAgent } from "../../agents/sanden/working-orchestrator.js";
 
 // Define the unified workflow context schema that flows between all steps
 const WorkflowContextSchema = z.object({

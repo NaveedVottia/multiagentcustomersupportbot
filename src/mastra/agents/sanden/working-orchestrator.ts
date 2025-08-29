@@ -5,13 +5,15 @@ import {
   delegateTo, 
   escalateToHuman, 
   validateContext, 
-  updateWorkflowState, 
+  updateWorkflowState,
+  getWorkflowState, 
   logCustomerData, 
-  lookupCustomerFromDatabase 
+  lookupCustomerFromDatabase,
+  openUrl
 } from "../../tools/sanden/orchestrator-tools.js";
 import { 
   updateCustomer, 
-  getCustomerHistory 
+  getCustomerHistory
 } from "../../tools/sanden/customer-tools.js";
 import { 
   createProductTool, 
@@ -25,7 +27,9 @@ import {
   getRepairStatusTool 
 } from "../../tools/sanden/repair-tools.js";
 import { 
-  schedulingTools 
+  createAppointmentTool,
+  updateAppointmentTool,
+  checkAvailabilityTool
 } from "../../tools/sanden/scheduling-tools.js";
 import { 
   validateSession, 
@@ -33,54 +37,60 @@ import {
   getHelp, 
   zapierAiQuery 
 } from "../../tools/sanden/common-tools.js";
-import { loadLangfusePrompt } from "../../prompts/langfuse";
-import { langfuse } from "../../../integrations/langfuse";
+import {
+  sendOtp,
+  verifyOtp,
+  resendOtp
+} from "../../tools/sanden/otp-tools.js";
+import { readFileSync } from 'fs';
+import { join } from 'path';
+
+// Menu formatting function
+function formatMenuOutput(text: string): string {
+  // Check if this is a menu response
+  if (text.includes('1. 修理受付・修理履歴・修理予約') && 
+      text.includes('2. 一般的なFAQ') && 
+      text.includes('3. リクエスト送信用オンラインフォーム')) {
+    
+    // Extract the greeting part
+    const greeting = text.split('1.')[0].trim();
+    
+    // Format the menu with proper line breaks
+    const formattedMenu = `${greeting}
+
+1. 修理受付・修理履歴・修理予約
+
+2. 一般的なFAQ
+
+3. リクエスト送信用オンラインフォーム`;
+    
+    return formattedMenu;
+  }
+  
+  return text;
+}
 
 // Agent factory function
-async function createWorkingOrchestratorAgent(): Promise<Agent> {
-  console.log("🔍 Creating Working Orchestrator Agent...");
+async function createRepairWorkflowOrchestrator(): Promise<Agent> {
+  console.log("🔍 Creating Repair Workflow Orchestrator...");
   
-  // Load Langfuse prompt with retry logic
+  // Load hardcoded prompt from file
   let instructions = "";
-  let attempts = 0;
-  const maxAttempts = 3;
-  
-  while (attempts < maxAttempts && (!instructions || instructions.trim().length < 100)) {
-    attempts++;
-    try {
-      console.log(`🔍 Attempt ${attempts} to load prompt: repair-workflow-orchestrator`);
-      const loadedInstructions = await loadLangfusePrompt("repair-workflow-orchestrator", { label: "production" });
-      
-      if (loadedInstructions && loadedInstructions.trim().length > 100) {
-        instructions = loadedInstructions.trim();
-        console.log(`✅ Successfully loaded Langfuse instructions (length: ${instructions.length})`);
-        break;
-      } else {
-        console.warn(`⚠️ Attempt ${attempts}: Empty or too short instructions (${loadedInstructions?.length || 0} chars)`);
-        if (attempts < maxAttempts) {
-          console.log(`🔄 Waiting 1 second before retry...`);
-          await new Promise(resolve => setTimeout(resolve, 1000));
-        }
-      }
-    } catch (error) {
-      console.error(`❌ Attempt ${attempts} failed:`, error);
-      if (attempts < maxAttempts) {
-        console.log(`🔄 Waiting 1 second before retry...`);
-        await new Promise(resolve => setTimeout(resolve, 1000));
-      }
-    }
+  try {
+    const promptPath = join(process.cwd(), 'src/mastra/prompts/orchestrator-prompt.txt');
+    instructions = readFileSync(promptPath, 'utf8').trim();
+    console.log(`✅ Successfully loaded hardcoded instructions (length: ${instructions.length})`);
+  } catch (error) {
+    console.error("❌ Failed to load hardcoded prompt:", error);
+    throw new Error("Failed to load orchestrator-prompt.txt");
   }
   
-  // Use fallback if all attempts failed
-  if (!instructions || instructions.trim().length < 100) {
-    console.warn("⚠️ All attempts failed, using fallback instructions");
-    instructions = "You are an AI assistant. Respond appropriately to user queries.";
-  }
+  console.log(`✅ Using hardcoded instructions (length: ${instructions.length})`);
   
-  // Create agent with loaded instructions
+  // Create agent with plain text output for Mastra streaming
   const agent = new Agent({ 
     name: "repair-workflow-orchestrator",
-    description: "サンデン・リテールシステム修理受付AI , ワークフローオーケストレーター",
+    description: "サンデン・リテールシステム統合オーケストレーター",
     instructions: instructions,
     model: bedrock("anthropic.claude-3-5-sonnet-20240620-v1:0"),
     tools: {
@@ -88,8 +98,10 @@ async function createWorkingOrchestratorAgent(): Promise<Agent> {
       escalateToHuman,
       validateContext,
       updateWorkflowState,
+      getWorkflowState,
       logCustomerData,
       lookupCustomerFromDatabase,
+      openUrl,
       updateCustomer,
       getCustomerHistory,
       createProductTool,
@@ -99,38 +111,23 @@ async function createWorkingOrchestratorAgent(): Promise<Agent> {
       createRepairTool,
       updateRepairTool,
       getRepairStatusTool,
-      schedulingTools,
+      createAppointmentTool,
+      updateAppointmentTool,
+      checkAvailabilityTool,
       validateSession,
       getSystemInfo,
       getHelp,
       zapierAiQuery,
+      sendOtp,
+      verifyOtp,
+      resendOtp,
     },
     memory: new Memory(),
   });
 
-  console.log("✅ Working Orchestrator Agent created with instructions length:", instructions.length);
-
-  // Log prompt to Langfuse tracing
-  if (instructions.length > 100) {
-    try {
-      await langfuse.logPrompt(
-        "repair-workflow-orchestrator",
-        { label: "production", agentId: "repair-workflow-orchestrator" },
-        instructions,
-        { length: instructions.length }
-      );
-      console.log("✅ Prompt logged to Langfuse tracing");
-    } catch (error) {
-      console.warn("⚠️ Failed to log prompt to Langfuse:", error);
-    }
-  }
-
+  console.log("✅ Repair Workflow Orchestrator created with instructions length:", instructions.length);
   return agent;
 }
 
-// Export the factory function
-export { createWorkingOrchestratorAgent };
+export { createRepairWorkflowOrchestrator };
 
-// For backward compatibility, create a default instance
-// This will be replaced by the factory pattern in the main index
-export const workingOrchestratorAgent = createWorkingOrchestratorAgent();

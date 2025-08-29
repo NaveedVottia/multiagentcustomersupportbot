@@ -1,7 +1,7 @@
 import { createTool } from "@mastra/core/tools";
-import { langfuse } from "../../../integrations/langfuse";
+import { langfuse } from "../../../integrations/langfuse.js";
 import { z } from "zod";
-import { zapierMcp } from "../../../integrations/zapier-mcp";
+import { zapierMcp } from "../../../integrations/zapier-mcp.js";
 
 let mastraInstance: any;
 
@@ -206,6 +206,56 @@ export const updateWorkflowState = createTool({
     await langfuse.logToolExecution(traceId, "updateWorkflowState", { hasUpdates: !!payload.updates }, res);
     await langfuse.endTrace(traceId, { success: true });
     return res;
+  },
+});
+
+export const getWorkflowState = createTool({
+  id: "getWorkflowState",
+  description: "Get current workflow state values",
+  inputSchema: z.object({ 
+    key: z.string().optional(),
+    keys: z.array(z.string()).optional()
+  }),
+  outputSchema: z.object({ success: z.boolean(), data: z.any() }),
+  async execute(args: ToolExecuteArgs) {
+    const { key, keys } = getArgs(args);
+    const traceId = await langfuse.startTrace("tool.getWorkflowState");
+    
+    // Default state values matching our schema
+    const defaultState = {
+      opened_faq_once: false,
+      opened_form_once: false,
+      opened_privacy_once: false,
+      handoff_failures: 0,
+      last_user_turn_id: "",
+      session_started_epoch: Date.now(),
+      otp_attempts: 0,
+      otp_locked: false,
+      otp_lock_until_epoch: 0,
+      otp_last_sent_epoch: 0,
+      otp_last_channel: "",
+      user_timezone: "Asia/Tokyo"
+    };
+    
+    let result;
+    if (key) {
+      console.log(`📖 [GetWorkflowState] Getting ${key}`);
+      result = { success: true, data: defaultState[key as keyof typeof defaultState] || null };
+    } else if (keys) {
+      console.log(`📖 [GetWorkflowState] Getting multiple keys: ${keys.join(', ')}`);
+      const data: Record<string, any> = {};
+      for (const k of keys) {
+        data[k] = defaultState[k as keyof typeof defaultState] || null;
+      }
+      result = { success: true, data };
+    } else {
+      console.log(`📖 [GetWorkflowState] Getting all state`);
+      result = { success: true, data: defaultState };
+    }
+    
+    await langfuse.logToolExecution(traceId, "getWorkflowState", { key, keys }, result);
+    await langfuse.endTrace(traceId, { success: true });
+    return result;
   },
 });
 
@@ -678,14 +728,48 @@ function formatCustomerResults(rows: any[]): string {
   return text.trim();
 }
 
+export const openUrl = createTool({
+  id: "openUrl",
+  description: "Signal URL opening via Mastra metadata stream",
+  inputSchema: z.object({ 
+    url: z.string(),
+    description: z.string().optional(),
+    target: z.enum(["_blank", "_self"]).optional()
+  }),
+  outputSchema: z.object({ success: z.boolean(), url: z.string(), action: z.string() }),
+  async execute(args: ToolExecuteArgs) {
+    const { url, description = "リンク", target = "_blank" } = getArgs(args) as { url: string; description?: string; target?: string };
+    const traceId = await langfuse.startTrace("tool.openUrl", { url });
+    
+    try {
+      console.log(`🔗 [OpenURL] Requesting URL open: ${url}`);
+      
+      // Return structured data that the agent can use in its response
+      // The actual URL opening will be handled by the d: metadata in the server response
+      const res = { success: true, url, action: "openUrl", description, target };
+      await langfuse.logToolExecution(traceId, "openUrl", { url, description, target }, res);
+      await langfuse.endTrace(traceId, { success: true });
+      return res;
+    } catch (error) {
+      console.error("Failed to process openUrl request:", error);
+      const res = { success: false, url: "", action: "error" };
+      await langfuse.logToolExecution(traceId, "openUrl", { url, description, target }, res);
+      await langfuse.endTrace(traceId, { success: false });
+      return res;
+    }
+  },
+});
+
 export const orchestratorTools = { 
   delegateTo, 
   escalateToHuman, 
   validateContext, 
-  updateWorkflowState, 
+  updateWorkflowState,
+  getWorkflowState, 
   logCustomerData, 
   lookupCustomerFromDatabase,
   streamToZapierFormat,
   streamRealtimeToZapier,
-  streamZapierResponse
+  streamZapierResponse,
+  openUrl
 };

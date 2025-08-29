@@ -1,4 +1,4 @@
-import { delegateTo } from "../tools/sanden/orchestrator-tools";
+import { delegateTo } from "../tools/sanden/orchestrator-tools.js";
 
 // WORKING ENDPOINT - Simple endpoint handler for testing
 export class WorkingEndpoint {
