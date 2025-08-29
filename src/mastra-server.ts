@@ -661,17 +661,17 @@ function writeFinish(res: Response, fullTextLength: number, promptTokens: number
   try { (res as any).flush?.(); } catch {}
 }
 
-// Main endpoint for the repair workflow orchestrator
+// Main endpoint for customer identification and repair workflow (bypassing orchestrator)
 app.post("/api/agents/repair-workflow-orchestrator/stream", async (req: Request, res: Response) => {
   try {
     const messages = Array.isArray(req.body?.messages) ? req.body.messages : [];
     const sessionId = req.headers['x-session-id'] as string || `session_${Date.now()}_${Math.random().toString(36).slice(2)}`;
     
-    // Get or create agent instance for this session to maintain conversation memory
-    const agent = await getOrCreateAgent(sessionId, "repair-workflow-orchestrator");
+    // Use customer identification agent directly for the complete workflow
+    const agent = await getOrCreateAgent(sessionId, "routing-agent-customer-identification");
     
     if (!agent) {
-      return res.status(500).json({ error: "Agent 'repair-workflow-orchestrator' not found" });
+      return res.status(500).json({ error: "Agent 'routing-agent-customer-identification' not found" });
     }
 
     console.log(`🔍 Processing request with ${messages.length} messages for session ${sessionId}`);
@@ -682,7 +682,7 @@ app.post("/api/agents/repair-workflow-orchestrator/stream", async (req: Request,
     console.log(`🔍 Current session:`, currentSession);
     
     // Start a trace for this request
-    const traceId = await langfuse.startTrace("repair-workflow-orchestrator", {
+    const traceId = await langfuse.startTrace("customer-identification-workflow", {
       endpoint: "/api/agents/repair-workflow-orchestrator/stream",
       messageCount: messages.length,
       sessionId: currentSession?.sessionId,
@@ -746,7 +746,7 @@ app.post("/api/agents/repair-workflow-orchestrator/stream", async (req: Request,
     writeFinish(res, fullTextLength, promptTokens);
     
     // Log tool execution and end trace
-    await langfuse.logToolExecution(traceId, "repair-workflow-orchestrator", {
+    await langfuse.logToolExecution(traceId, "customer-identification-workflow", {
       messages: msgForAgent,
       extracted: extracted,
       sessionId: sessionId
