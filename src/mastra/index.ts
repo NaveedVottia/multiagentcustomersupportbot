@@ -21,6 +21,9 @@ import { createRepairAgent } from "./agents/sanden/repair-agent.js";
 import { createRepairHistoryTicketAgent } from "./agents/sanden/repair-history-ticket-agent.js";
 import { createRepairSchedulingAgent } from "./agents/sanden/repair-scheduling-agent.js";
 
+// Import workflows
+import { repairWorkflow } from "./workflows/sanden/repair-workflow.js";
+
 // Import the setter for Mastra instance
 import { setMastraInstance } from "./tools/sanden/orchestrator-tools.js";
 
@@ -42,7 +45,7 @@ async function initializeAgents() {
         const repairSchedulingAgent = await createRepairSchedulingAgent();
     console.log("✅ Repair Scheduling Agent initialized");
     
-    // Create Mastra instance with all agents
+    // Create Mastra instance with all agents and workflows
     const mastraInstance = new Mastra({
       agents: {
         // Customer identification agent as the main entry point
@@ -53,6 +56,9 @@ async function initializeAgents() {
         "repair-agent": repairAgent,
         "repair-history-ticket-agent": repairHistoryTicketAgent,
         "repair-scheduling-agent": repairSchedulingAgent,
+      },
+      workflows: {
+        repairWorkflow,
       },
       
       storage: new LibSQLStore({
@@ -68,9 +74,10 @@ async function initializeAgents() {
     // Set the Mastra instance for tools to use
     setMastraInstance(mastraInstance);
 
-    console.log("✅ Mastra instance created with 4 agents");
+    console.log("✅ Mastra instance created with 4 agents and 1 workflow");
     console.log("✅ Main endpoint: POST /api/agents/repair-workflow-orchestrator/stream");
     console.log("✅ Customer identification agent ready (unified entry point)");
+    console.log("✅ Repair workflow ready for agent-to-agent flow");
 
     // Test the connection using the correct v0.13.2 API
     if (mastraInstance.getAgentById("repair-workflow-orchestrator")) {
@@ -86,10 +93,11 @@ async function initializeAgents() {
       console.log("✅ Repair scheduling agent verified");
     }
 
-    // Debug: Check what agents are actually available
-    console.log("🔍 Debug: Available agents in Mastra instance:");
+    // Debug: Check what agents and workflows are available
+    console.log("🔍 Debug: Available agents and workflows in Mastra instance:");
     console.log("mastra.getAgentById available:", typeof mastraInstance.getAgentById === 'function');
     console.log("Agent count: 4 (1 main customer identification + 3 workflow agents)");
+    console.log("Workflow count: 1 (repair-workflow with 4 steps)");
 
     return mastraInstance;
   } catch (error) {
