@@ -251,22 +251,27 @@ export const hybridGetProductsByCustomerId = createTool({
         instructions: `Get all products for customer ID: ${customerId}`,
         worksheet: "Products",
         row_count: "20", // Zapier expects string
-        lookup_key: "COL$A", // Use exact column reference for 顧客ID
+        lookup_key: "COL$B", // Use exact column reference for 顧客ID (2nd column in Products sheet)
         lookup_value: customerId,
       });
       
-      if (zapierResult && zapierResult.rows && zapierResult.rows.length > 0) {
-        console.log(`✅ Zapier found ${zapierResult.rows.length} products`);
+      console.log(`🔍 Zapier product lookup result:`, JSON.stringify(zapierResult, null, 2));
+      
+      // Parse Zapier response structure: {"0": {"rows": [...]}}
+      const rows = zapierResult?.["0"]?.rows || zapierResult?.rows || [];
+      
+      if (rows && rows.length > 0) {
+        console.log(`✅ Zapier found ${rows.length} products`);
         return {
           success: true,
-          products: zapierResult.rows.map((row: any) => ({
+          products: rows.map((row: any) => ({
             productId: row["COL$A"],
             category: row["COL$C"],
             model: row["COL$D"],
             serialNumber: row["COL$E"],
             warrantyStatus: row["COL$F"],
           })),
-          message: `Zapierで${zapierResult.rows.length}件の製品が見つかりました。`,
+          message: `Zapierで${rows.length}件の製品が見つかりました。`,
           source: "zapier",
         };
       }
@@ -342,24 +347,29 @@ export const hybridGetRepairsByCustomerId = createTool({
         instructions: `Get all repairs for customer ID: ${customerId}`,
         worksheet: "repairs",
         row_count: "50", // Zapier expects string
-        lookup_key: "COL$A", // Use exact column reference for 顧客ID
+        lookup_key: "COL$D", // Use exact column reference for 顧客ID (4th column in repairs sheet)
         lookup_value: customerId,
       });
       
-      if (zapierResult && zapierResult.rows && zapierResult.rows.length > 0) {
-        console.log(`✅ Zapier found ${zapierResult.rows.length} repairs`);
+      console.log(`🔍 Zapier repair lookup result:`, JSON.stringify(zapierResult, null, 2));
+      
+      // Parse Zapier response structure: {"0": {"rows": [...]}}
+      const rows = zapierResult?.["0"]?.rows || zapierResult?.rows || [];
+      
+      if (rows && rows.length > 0) {
+        console.log(`✅ Zapier found ${rows.length} repairs`);
         return {
           success: true,
-          repairs: zapierResult.rows.map((row: any) => ({
-            repairId: row["COL$A"],
-            date: row["COL$B"],
-            problem: row["COL$E"],
-            status: row["COL$F"],
-            visitRequired: row["COL$G"],
-            priority: row["COL$H"],
-            assignedTo: row["COL$I"],
+          repairs: rows.map((row: any) => ({
+            repairId: row["COL$A"],      // Repair ID (1st column)
+            date: row["COL$B"],          // Date (2nd column)
+            problem: row["COL$E"],       // Problem (5th column)
+            status: row["COL$F"],        // Status (6th column)
+            visitRequired: row["COL$G"], // Visit Required (7th column)
+            priority: row["COL$H"],      // Priority (8th column)
+            assignedTo: row["COL$I"],    // Assigned To (9th column)
           })),
-          message: `Zapierで${zapierResult.rows.length}件の修理履歴が見つかりました。`,
+          message: `Zapierで${rows.length}件の修理履歴が見つかりました。`,
           source: "zapier",
         };
       }
