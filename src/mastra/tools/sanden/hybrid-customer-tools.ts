@@ -32,7 +32,7 @@ export const hybridLookupCustomerByDetails = createTool({
     // First, try Zapier MCP
     try {
       console.log("🔄 Trying Zapier MCP first...");
-      const zapierClient = new ZapierMcpClient();
+      const zapierClient = ZapierMcpClient.getInstance();
       
       // Try to lookup customer via Zapier
       const zapierResult = await zapierClient.callTool("google_sheets_lookup_spreadsheet_rows_advanced", {
@@ -164,7 +164,7 @@ export const hybridRegisterCustomer = createTool({
     // First, try Zapier MCP
     try {
       console.log("🔄 Trying Zapier MCP for registration...");
-      const zapierClient = new ZapierMcpClient();
+      const zapierClient = ZapierMcpClient.getInstance();
       
       // Try to create customer via Zapier
       const zapierResult = await zapierClient.callTool("google_sheets_create_spreadsheet_row_at_top", {
@@ -244,7 +244,7 @@ export const hybridGetProductsByCustomerId = createTool({
     // First, try Zapier MCP
     try {
       console.log("🔄 Trying Zapier MCP for products...");
-      const zapierClient = new ZapierMcpClient();
+      const zapierClient = ZapierMcpClient.getInstance();
       
       // Try to get products via Zapier
       const zapierResult = await zapierClient.callTool("google_sheets_lookup_spreadsheet_rows_advanced", {
@@ -340,7 +340,7 @@ export const hybridGetRepairsByCustomerId = createTool({
     // First, try Zapier MCP
     try {
       console.log("🔄 Trying Zapier MCP for repairs...");
-      const zapierClient = new ZapierMcpClient();
+      const zapierClient = ZapierMcpClient.getInstance();
       
       // Try to get repairs via Zapier
       const zapierResult = await zapierClient.callTool("google_sheets_lookup_spreadsheet_rows_advanced", {
@@ -439,7 +439,7 @@ export const hybridCreateLogEntry = createTool({
     // First, try Zapier MCP
     try {
       console.log("🔄 Trying Zapier MCP for log creation...");
-      const zapierClient = new ZapierMcpClient();
+      const zapierClient = ZapierMcpClient.getInstance();
       
       // Try to create log via Zapier
       const zapierResult = await zapierClient.callTool("google_sheets_create_spreadsheet_row_at_top", {
