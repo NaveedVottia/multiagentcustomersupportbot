@@ -2,7 +2,6 @@ import { Agent } from "@mastra/core/agent";
 import { Memory } from "@mastra/memory";
 import { bedrock } from "@ai-sdk/amazon-bedrock";
 import { 
-  delegateTo, 
   escalateToHuman, 
   validateContext, 
   updateWorkflowState, 
@@ -68,7 +67,6 @@ async function createRepairWorkflowOrchestrator(): Promise<Agent> {
     instructions: instructions,
     model: bedrock("anthropic.claude-3-5-sonnet-20240620-v1:0"),
     tools: {
-      delegateTo,
       openUrl,
       validateContext,
       updateWorkflowState,
