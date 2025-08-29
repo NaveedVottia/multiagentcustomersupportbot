@@ -6,6 +6,7 @@ import { commonTools } from "../../tools/sanden/common-tools.js";
 import { orchestratorTools } from "../../tools/sanden/orchestrator-tools.js";
 import { repairTools } from "../../tools/sanden/repair-tools.js";
 import { schedulingTools } from "../../tools/sanden/scheduling-tools.js";
+import { hybridCreateLogEntry } from "../../tools/sanden/hybrid-customer-tools.js";
 import { readFileSync } from 'fs';
 import { join } from 'path';
 
@@ -36,6 +37,7 @@ async function createRepairSchedulingAgent(): Promise<Agent> {
       ...orchestratorTools,
       ...repairTools,
       ...schedulingTools,
+      hybridCreateLogEntry, // Required tool for posting to LOGS sheet
     },
     memory: new Memory(),
   });

@@ -4,44 +4,15 @@ import { bedrock } from "@ai-sdk/amazon-bedrock";
 import { 
   delegateTo, 
   escalateToHuman, 
-  validateContext, 
+  openUrl,
+  validateContext,
   updateWorkflowState,
-  getWorkflowState, 
-  logCustomerData, 
-  lookupCustomerFromDatabase,
-  openUrl
+  getWorkflowState
 } from "../../tools/sanden/orchestrator-tools.js";
 import { 
-  updateCustomer, 
-  getCustomerHistory
-} from "../../tools/sanden/customer-tools.js";
-import { 
-  createProductTool, 
-  updateProductTool, 
-  searchProductsTool, 
-  checkWarrantyStatusTool 
-} from "../../tools/sanden/product-tools.js";
-import { 
-  createRepairTool, 
-  updateRepairTool, 
-  getRepairStatusTool 
-} from "../../tools/sanden/repair-tools.js";
-import { 
-  createAppointmentTool,
-  updateAppointmentTool,
-  checkAvailabilityTool
-} from "../../tools/sanden/scheduling-tools.js";
-import { 
-  validateSession, 
-  getSystemInfo, 
-  getHelp, 
-  zapierAiQuery 
+  validateSession
 } from "../../tools/sanden/common-tools.js";
-import {
-  sendOtp,
-  verifyOtp,
-  resendOtp
-} from "../../tools/sanden/otp-tools.js";
+// OTP tools removed - using direct customer identification workflow
 import { readFileSync } from 'fs';
 import { join } from 'path';
 
@@ -87,40 +58,22 @@ async function createRepairWorkflowOrchestrator(): Promise<Agent> {
   
   console.log(`✅ Using hardcoded instructions (length: ${instructions.length})`);
   
-  // Create agent with plain text output for Mastra streaming
+  // Create agent with enhanced memory for conversation state
   const agent = new Agent({ 
     name: "repair-workflow-orchestrator",
     description: "サンデン・リテールシステム統合オーケストレーター",
     instructions: instructions,
     model: bedrock("anthropic.claude-3-5-sonnet-20240620-v1:0"),
     tools: {
+      // Essential delegation and workflow tools only
       delegateTo,
       escalateToHuman,
+      openUrl,
       validateContext,
       updateWorkflowState,
       getWorkflowState,
-      logCustomerData,
-      lookupCustomerFromDatabase,
-      openUrl,
-      updateCustomer,
-      getCustomerHistory,
-      createProductTool,
-      updateProductTool,
-      searchProductsTool,
-      checkWarrantyStatusTool,
-      createRepairTool,
-      updateRepairTool,
-      getRepairStatusTool,
-      createAppointmentTool,
-      updateAppointmentTool,
-      checkAvailabilityTool,
+      // Basic session validation
       validateSession,
-      getSystemInfo,
-      getHelp,
-      zapierAiQuery,
-      sendOtp,
-      verifyOtp,
-      resendOtp,
     },
     memory: new Memory(),
   });

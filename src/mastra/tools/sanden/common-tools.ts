@@ -17,11 +17,7 @@ export const validateSession = createTool({
     const { sessionId } = context;
 
     try {
-      // Use Logs: Get Data Range as a lightweight connectivity check; in a real impl you'd have a dedicated session tool
-      await zapierMcp.callTool("google_sheets_get_data_range", {
-        instructions: "validate session connectivity",
-        a1_range: "A1:I1",
-      });
+      // Simple session validation without external calls
       const result = { data: { sessionId } } as any;
       return {
         success: true,
@@ -53,11 +49,8 @@ export const getSystemInfo = createTool({
     const { sessionId } = context;
 
     try {
-      const headers = await zapierMcp.callTool("google_sheets_get_data_range", {
-        instructions: "system info headers",
-        a1_range: "A1:I1",
-      });
-      const result = { data: { headers } } as any;
+      // Simple system info without external calls
+      const result = { data: { headers: "System ready" } } as any;
       return {
         success: true,
         data: result.data || result,

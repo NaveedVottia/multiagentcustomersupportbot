@@ -1,6 +1,6 @@
 import { createWorkflow, createStep } from "@mastra/core/workflows";
 import { z } from "zod";
-import { workingOrchestratorAgent } from "../../agents/sanden/working-orchestrator.js";
+import { createRepairWorkflowOrchestrator } from "../../agents/sanden/repair-workflow-orchestrator.js";
 
 // Define the unified workflow context schema that flows between all steps
 const WorkflowContextSchema = z.object({
@@ -41,11 +41,13 @@ const WorkflowContextSchema = z.object({
   status: z.enum(["streaming", "completed", "emergency_escalated", "error_escalated", "continue_workflow"]).optional(),
   nextStep: z.string().optional(),
   error: z.string().optional(),
+  userInput: z.string().optional(),
+  currentAgent: z.string().optional(),
 });
 
-// Step 1: External API streaming connection
-const externalApiStreamStep = createStep({
-  id: "external-api-stream",
+// Step 1: Initial Orchestrator Step - Shows main menu and handles user selection
+const initialOrchestratorStep = createStep({
+  id: "initial-orchestrator",
   inputSchema: z.object({
     userInput: z.string().describe("User input for the repair workflow"),
     sessionId: z.string().optional().describe("Session ID for tracking"),
@@ -56,147 +58,58 @@ const externalApiStreamStep = createStep({
     const sessionIdValue = sessionId || `session-${Date.now()}`;
 
     try {
-      // Connect to external API streaming endpoint
-      const externalApiUrl = "https://mastra.demo.dev-maestra.vottia.me/api/agents/repair-workflow-orchestrator/stream";
-      
-      console.log(`🔄 Connecting to external API: ${externalApiUrl}`);
+      console.log(`🔄 Initial orchestrator step for session: ${sessionIdValue}`);
       console.log(`📝 User Input: ${userInput}`);
-      console.log(`🆔 Session ID: ${sessionIdValue}`);
 
-      // Make the request to the external API using SSE-compatible headers and payload
-      const sseResponse = await fetch(externalApiUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Accept": "text/plain",
-        },
-        body: JSON.stringify({
-          messages: [
-            { role: "user", content: userInput },
-          ],
-        }),
-      });
-
-      if (!sseResponse.ok) {
-        throw new Error(`External API request failed: ${sseResponse.status} ${sseResponse.statusText}`);
-      }
-
-      // Read a small portion of the stream to surface initial feedback to the workflow
-      let aggregatedText = "";
-      try {
-        const reader = (sseResponse.body as any)?.getReader?.();
-        if (reader) {
-          const decoder = new TextDecoder();
-          const startTime = Date.now();
-          while (Date.now() - startTime < 1500) {
-            const { value, done } = await reader.read();
-            if (done) break;
-            aggregatedText += decoder.decode(value, { stream: true });
-            if (aggregatedText.length > 4000) break; // cap
-          }
-          try { await reader.cancel(); } catch {}
-        } else {
-          aggregatedText = await sseResponse.text();
-        }
-      } catch {}
-
-      // Continue workflow; pass the partial stream text forward
-      return {
-        sessionId: sessionIdValue,
-        step: "external-api-stream",
-        status: "streaming" as const,
-        nextStep: "orchestrator",
-        workflowDuration: 0,
-      };
-
-    } catch (error: any) {
-      console.error("❌ External API streaming error:", error);
-      
-      // Check for emergency keywords in user input
+      // Check for emergency keywords first
       const emergencyKeywords = ["火災", "発火", "煙", "fire", "smoke", "burning", "感電", "電気", "shock", "electric", "spark", "水漏れ", "漏水", "flood", "leak", "water damage"];
       const hasEmergency = emergencyKeywords.some(keyword => 
         userInput.toLowerCase().includes(keyword.toLowerCase())
       );
 
       if (hasEmergency) {
+        console.log("🚨 Emergency detected, escalating to human");
         return {
           sessionId: sessionIdValue,
-          step: "external-api-stream",
+          step: "initial-orchestrator",
           status: "emergency_escalated" as const,
           workflowDuration: 0,
-        };
-      }
-
-      return {
-        sessionId: sessionIdValue,
-        step: "external-api-stream",
-        status: "error_escalated" as const,
-        workflowDuration: 0,
-      };
-    }
-  },
-});
-
-// Step 2: Orchestrator agent step for workflow management
-const orchestratorStep = createStep({
-  id: "workflow-orchestrator",
-  inputSchema: WorkflowContextSchema,
-  outputSchema: WorkflowContextSchema,
-  execute: async ({ inputData }: { inputData: any }) => {
-    const { sessionId, status, step } = inputData;
-    let currentContextValue = inputData;
-
-    // If we already have a final status from the external API, return it
-    if (status === "completed" || status === "emergency_escalated" || status === "error_escalated") {
-      if (status === "completed") {
-        return {
-          ...currentContextValue,
-          step: "orchestrator",
-          status: "completed" as const,
-          repairData: {
-            修理ID: `REP-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-            日時: new Date().toISOString(),
-            製品ID: "PROD001", // Placeholder
-            顧客ID: "CUST001", // Placeholder
-            問題内容: "Workflow completed",
-            ステータス: "完了",
-            訪問要否: "不要",
-            優先度: "中",
-            対応者: "AI",
-          },
-          nextStep: "workflow-complete",
-        };
-      } else if (status === "emergency_escalated") {
-        return {
-          ...currentContextValue,
-          step: "orchestrator",
-          status: "emergency_escalated" as const,
           nextStep: "emergency-handling",
         };
-      } else {
+      }
+
+      // Check if user is requesting repair service
+      const repairKeywords = ["修理", "修理受付", "修理履歴", "修理予約", "repair", "maintenance", "fix", "broken", "故障", "問題"];
+      const isRepairRequest = repairKeywords.some(keyword => 
+        userInput.toLowerCase().includes(keyword.toLowerCase())
+      );
+
+      if (isRepairRequest) {
+        console.log("🔧 Repair request detected, proceeding to customer identification");
         return {
-          ...currentContextValue,
-          step: "orchestrator",
-          status: "error_escalated" as const,
-          nextStep: "error-handling",
+          sessionId: sessionIdValue,
+          step: "initial-orchestrator",
+          status: "continue_workflow" as const,
+          nextStep: "customer-identification",
+          userInput,
         };
       }
-    }
 
-    try {
-      // For now, continue to customer identification
+      // Default: show main menu
+      console.log("📋 Showing main menu");
       return {
-        ...currentContextValue,
-        step: "orchestrator",
+        sessionId: sessionIdValue,
+        step: "initial-orchestrator",
         status: "continue_workflow" as const,
-        nextStep: "customer-identification",
+        nextStep: "show-main-menu",
+        userInput,
       };
 
     } catch (error: any) {
-      console.error("❌ Orchestrator step error:", error);
+      console.error("❌ Initial orchestrator step error:", error);
       return {
-        ...currentContextValue,
-        step: "orchestrator",
+        sessionId: sessionIdValue,
+        step: "initial-orchestrator",
         status: "error_escalated" as const,
         error: error.message,
         nextStep: "error-handling",
@@ -205,30 +118,57 @@ const orchestratorStep = createStep({
   },
 });
 
-// Step 3: Customer Identification Step
-const customerIdentificationStep = createStep({
-  id: "customer-identification",
+// Step 2: Show Main Menu Step
+const showMainMenuStep = createStep({
+  id: "show-main-menu",
   inputSchema: WorkflowContextSchema,
   outputSchema: WorkflowContextSchema,
   execute: async ({ inputData }: { inputData: any }) => {
     const { sessionId, step } = inputData;
     
     try {
-      // Simulate customer identification - in real implementation, this would extract from user input
-      const customerData = {
-        顧客ID: `CUST-${Date.now()}`,
-        会社名: "サンプル店舗",
-        メールアドレス: "sample@example.com",
-        電話番号: "03-1234-5678",
-        所在地: "東京都・サンプル",
-      };
+      console.log(`📋 Showing main menu for session: ${sessionId}`);
       
+      // This step would typically return the menu text
+      // In a real implementation, this would be handled by the orchestrator agent
+      return {
+        ...inputData,
+        step: "show-main-menu",
+        status: "continue_workflow" as const,
+        nextStep: "wait-for-user-selection",
+      };
+    } catch (error: any) {
+      console.error("❌ Show main menu error:", error);
+      return {
+        ...inputData,
+        step: "show-main-menu",
+        status: "error_escalated" as const,
+        error: error.message,
+        nextStep: "error-handling",
+      };
+    }
+  },
+});
+
+// Step 3: Customer Identification Step - Delegates to customer identification agent
+const customerIdentificationStep = createStep({
+  id: "customer-identification",
+  inputSchema: WorkflowContextSchema,
+  outputSchema: WorkflowContextSchema,
+  execute: async ({ inputData }: { inputData: any }) => {
+    const { sessionId, step, userInput } = inputData;
+    
+    try {
+      console.log(`🔍 Customer identification step for session: ${sessionId}`);
+      
+      // This step would delegate to the customer identification agent
+      // The agent would handle the conversation flow and return customer data
       return {
         ...inputData,
         step: "customer-identification",
-        customerData,
-        nextStep: "product-selection",
-        workflowDuration: Date.now() - parseInt(sessionId.replace('session-', '')),
+        status: "continue_workflow" as const,
+        nextStep: "customer-identification-agent",
+        currentAgent: "routing-agent-customer-identification",
       };
     } catch (error: any) {
       console.error("❌ Customer identification error:", error);
@@ -243,20 +183,74 @@ const customerIdentificationStep = createStep({
   },
 });
 
-// Step 4: Product Selection Step
-const productSelectionStep = createStep({
-  id: "product-selection",
+// Step 4: Customer Identification Agent Step - Handles the actual customer identification
+const customerIdentificationAgentStep = createStep({
+  id: "customer-identification-agent",
   inputSchema: WorkflowContextSchema,
   outputSchema: WorkflowContextSchema,
   execute: async ({ inputData }: { inputData: any }) => {
-    const { sessionId, step, customerData } = inputData;
+    const { sessionId, step, userInput } = inputData;
     
     try {
+      console.log(`🔍 Customer identification agent step for session: ${sessionId}`);
+      
+      // This step would use the customer identification agent to:
+      // 1. Ask for email address
+      // 2. Ask for phone number  
+      // 3. Ask for company name
+      // 4. Look up customer using hybridLookupCustomerByDetails tool
+      
+      // For now, simulate the process
+      const customerData = {
+        顧客ID: `CUST-${Date.now()}`,
+        会社名: "サンプル店舗",
+        メールアドレス: "sample@example.com",
+        電話番号: "03-1234-5678",
+        所在地: "東京都・サンプル",
+      };
+      
+      return {
+        ...inputData,
+        step: "customer-identification-agent",
+        customerData,
+        status: "continue_workflow" as const,
+        nextStep: "repair-agent",
+        currentAgent: "repair-agent",
+      };
+    } catch (error: any) {
+      console.error("❌ Customer identification agent error:", error);
+      return {
+        ...inputData,
+        step: "customer-identification-agent",
+        status: "error_escalated" as const,
+        error: error.message,
+        nextStep: "error-handling",
+      };
+    }
+  },
+});
+
+// Step 5: Repair Agent Step - Handles repair history, products, and scheduling
+const repairAgentStep = createStep({
+  id: "repair-agent",
+  inputSchema: WorkflowContextSchema,
+  outputSchema: WorkflowContextSchema,
+  execute: async ({ inputData }: { inputData: any }) => {
+    const { sessionId, step, customerData, userInput } = inputData;
+    
+    try {
+      console.log(`🔧 Repair agent step for session: ${sessionId}`);
+      
       if (!customerData) {
         throw new Error("Customer data not available");
       }
       
-      // Simulate product selection - in real implementation, this would extract from user input
+      // This step would use the repair agent to:
+      // 1. Show repair service menu
+      // 2. Handle user selection (repair history, products, scheduling)
+      // 3. Use appropriate Zapier MCP tools for data lookup
+      
+      // For now, simulate the process
       const productData = {
         製品ID: `PROD-${Date.now()}`,
         顧客ID: customerData.顧客ID,
@@ -268,15 +262,17 @@ const productSelectionStep = createStep({
       
       return {
         ...inputData,
-        step: "product-selection",
+        step: "repair-agent",
         productData,
-        nextStep: "issue-analysis",
+        status: "continue_workflow" as const,
+        nextStep: "repair-scheduling",
+        currentAgent: "repair-scheduling-agent",
       };
     } catch (error: any) {
-      console.error("❌ Product selection error:", error);
+      console.error("❌ Repair agent error:", error);
       return {
         ...inputData,
-        step: "product-selection",
+        step: "repair-agent",
         status: "error_escalated" as const,
         error: error.message,
         nextStep: "error-handling",
@@ -285,59 +281,34 @@ const productSelectionStep = createStep({
   },
 });
 
-// Step 5: Issue Analysis Step
-const issueAnalysisStep = createStep({
-  id: "issue-analysis",
+// Step 6: Repair Scheduling Step - Handles final scheduling and confirmation
+const repairSchedulingStep = createStep({
+  id: "repair-scheduling",
   inputSchema: WorkflowContextSchema,
   outputSchema: WorkflowContextSchema,
   execute: async ({ inputData }: { inputData: any }) => {
-    const { sessionId, step, customerData, productData } = inputData;
+    const { sessionId, step, customerData, productData, userInput } = inputData;
     
     try {
+      console.log(`📅 Repair scheduling step for session: ${sessionId}`);
+      
       if (!customerData || !productData) {
-        throw new Error("Customer or product data not available");
+        throw new Error("Required data not available");
       }
       
-      // Simulate issue analysis - in real implementation, this would extract from user input
+      // This step would use the repair scheduling agent to:
+      // 1. Collect issue details
+      // 2. Determine priority and visit requirements
+      // 3. Schedule the repair visit
+      // 4. Create final repair record
+      
+      // For now, simulate the process
       const issueData = {
         問題内容: "コーヒーが出ない",
         優先度: "中",
         訪問要否: "要",
       };
       
-      return {
-        ...inputData,
-        step: "issue-analysis",
-        issueData,
-        nextStep: "visit-confirmation",
-      };
-    } catch (error: any) {
-      console.error("❌ Issue analysis error:", error);
-      return {
-        ...inputData,
-        step: "issue-analysis",
-        status: "error_escalated" as const,
-        error: error.message,
-        nextStep: "error-handling",
-      };
-    }
-  },
-});
-
-// Step 6: Visit Confirmation Step
-const visitConfirmationStep = createStep({
-  id: "visit-confirmation",
-  inputSchema: WorkflowContextSchema,
-  outputSchema: WorkflowContextSchema,
-  execute: async ({ inputData }: { inputData: any }) => {
-    const { sessionId, step, customerData, productData, issueData } = inputData;
-    
-    try {
-      if (!customerData || !productData || !issueData) {
-        throw new Error("Required data not available");
-      }
-      
-      // Create repair record
       const repairData = {
         修理ID: `REP-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
         日時: new Date().toISOString(),
@@ -352,16 +323,18 @@ const visitConfirmationStep = createStep({
       
       return {
         ...inputData,
-        step: "visit-confirmation",
+        step: "repair-scheduling",
+        issueData,
         repairData,
         status: "completed" as const,
         nextStep: "workflow-complete",
+        workflowDuration: Date.now() - parseInt(sessionId.replace('session-', '')),
       };
     } catch (error: any) {
-      console.error("❌ Visit confirmation error:", error);
+      console.error("❌ Repair scheduling error:", error);
       return {
         ...inputData,
-        step: "visit-confirmation",
+        step: "repair-scheduling",
         status: "error_escalated" as const,
         error: error.message,
         nextStep: "error-handling",
@@ -370,7 +343,7 @@ const visitConfirmationStep = createStep({
   },
 });
 
-// Create the comprehensive streaming workflow that handles the complete repair lifecycle
+// Create the comprehensive repair intake workflow
 export const repairIntakeOrchestratedWorkflow = createWorkflow({
   id: "repairIntakeOrchestratedWorkflow",
   inputSchema: z.object({
@@ -379,12 +352,12 @@ export const repairIntakeOrchestratedWorkflow = createWorkflow({
   }),
   outputSchema: WorkflowContextSchema,
 })
-  .then(externalApiStreamStep)
-  .then(orchestratorStep)
+  .then(initialOrchestratorStep)
+  .then(showMainMenuStep)
   .then(customerIdentificationStep)
-  .then(productSelectionStep)
-  .then(issueAnalysisStep)
-  .then(visitConfirmationStep)
+  .then(customerIdentificationAgentStep)
+  .then(repairAgentStep)
+  .then(repairSchedulingStep)
   .commit();
 
 // Export the workflow for use in the main Mastra instance

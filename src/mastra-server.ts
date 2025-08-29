@@ -3,8 +3,8 @@ import cors from "cors";
 import dotenv from "dotenv";
 import path from "path";
 import { fileURLToPath } from "url";
-import { mastra } from "./mastra/index";
-import { langfuse, type SessionData, type EvaluationScore } from "./integrations/langfuse";
+import { mastra } from "./mastra/index.js";
+import { langfuse, type SessionData, type EvaluationScore } from "./integrations/langfuse.js";
 
 // Load environment variables from server.env
 const __filename = fileURLToPath(import.meta.url);
@@ -79,6 +79,24 @@ app.use((req: Request, res: Response, next) => {
   next();
 });
 
+// Mastra agent memory management - using built-in agent memory instead of custom state
+const agentInstances = new Map<string, any>();
+
+async function getOrCreateAgent(sessionId: string, agentId: string) {
+  const key = `${sessionId}-${agentId}`;
+  
+  if (!agentInstances.has(key)) {
+    const agent = await getAgentById(agentId);
+    if (agent) {
+      agentInstances.set(key, agent);
+      console.log(`✅ Created new agent instance for session ${sessionId}`);
+    }
+    return agent;
+  }
+  
+  return agentInstances.get(key);
+}
+
 // Health check
 app.get("/health", async (req: Request, res: Response) => {
   try {
@@ -93,8 +111,8 @@ app.get("/health", async (req: Request, res: Response) => {
       console.log("mastra.getAgentById:", typeof mastraInstance.getAgentById);
       
       if (mastraInstance.getAgentById) {
-        // Try to get agents by known IDs
-        const knownAgents = ["repair-workflow-orchestrator", "routing-agent-customer-identification", "repair-agent-product-selection", "repair-qa-agent-issue-analysis", "repair-visit-confirmation-agent"];
+        // Try to get agents by known IDs (matching the actual registered agent IDs)
+        const knownAgents = ["repair-workflow-orchestrator", "routing-agent-customer-identification", "repair-agent", "repair-history-ticket-agent", "repair-scheduling-agent"];
         console.log("Trying known agent IDs:", knownAgents);
         
         for (const id of knownAgents) {
@@ -527,9 +545,10 @@ async function streamMastraResponse(stream: any, res: Response): Promise<number>
     // Format menu output if it's a menu response
     textToStream = formatMenuOutput(textToStream);
     
-    // Fallback if response is empty
+    // If empty, assume tool-only turn and do not emit fallback UI text
     if (!textToStream || textToStream.length === 0) {
-      textToStream = "申し訳ありませんが、応答を処理できませんでした。";
+      console.log("✅ Tool execution detected - no additional response needed");
+      return 0;
     }
     
     console.log("✅ Streaming plain text response");
@@ -646,13 +665,16 @@ function writeFinish(res: Response, fullTextLength: number, promptTokens: number
 app.post("/api/agents/repair-workflow-orchestrator/stream", async (req: Request, res: Response) => {
   try {
     const messages = Array.isArray(req.body?.messages) ? req.body.messages : [];
-    const agent = await getAgentById("repair-workflow-orchestrator");
+    const sessionId = req.headers['x-session-id'] as string || `session_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    
+    // Get or create agent instance for this session to maintain conversation memory
+    const agent = await getOrCreateAgent(sessionId, "repair-workflow-orchestrator");
     
     if (!agent) {
       return res.status(500).json({ error: "Agent 'repair-workflow-orchestrator' not found" });
     }
 
-    console.log(`🔍 Processing request with ${messages.length} messages`);
+    console.log(`🔍 Processing request with ${messages.length} messages for session ${sessionId}`);
     console.log(`🔍 Request body:`, JSON.stringify(req.body, null, 2));
     
     // Get current session info for logging
@@ -696,7 +718,9 @@ app.post("/api/agents/repair-workflow-orchestrator/stream", async (req: Request,
       role: "system",
       content: `parsed_contact_hint:${JSON.stringify(extracted)}`
     };
+    
     // Prepend context so the model can use it safely
+    // Note: Mastra agent memory will automatically maintain conversation context
     const msgForAgent = [contextMsg, ...normalizedMessages];
     
     // Set headers for streaming response
@@ -709,6 +733,7 @@ app.post("/api/agents/repair-workflow-orchestrator/stream", async (req: Request,
     writeMessageId(res, messageId);
     
     // Execute the agent using Mastra's stream method
+    // The agent's memory will automatically maintain conversation context
     const stream = await agent.stream(msgForAgent);
     
     // Stream using Mastra-compliant helper (0:"..." lines)
@@ -723,7 +748,8 @@ app.post("/api/agents/repair-workflow-orchestrator/stream", async (req: Request,
     // Log tool execution and end trace
     await langfuse.logToolExecution(traceId, "repair-workflow-orchestrator", {
       messages: msgForAgent,
-      extracted: extracted
+      extracted: extracted,
+      sessionId: sessionId
     }, {
       responseLength: fullTextLength,
       promptTokens,
@@ -737,7 +763,7 @@ app.post("/api/agents/repair-workflow-orchestrator/stream", async (req: Request,
       success: true
     });
     
-    console.log(`✅ Response complete, length: ${fullTextLength} characters, trace: ${traceId}`);
+    console.log(`✅ Response complete, length: ${fullTextLength} characters, trace: ${traceId}, session: ${sessionId}`);
     res.end();
     
   } catch (error: unknown) {
@@ -844,7 +870,7 @@ app.post("/api/agents/customerIdentification/stream", async (req: Request, res: 
 app.post("/api/agents/productSelection/stream", async (req: Request, res: Response) => {
   try {
     const messages = Array.isArray(req.body?.messages) ? req.body.messages : [];
-    const agent = await getAgentById("repair-agent-product-selection");
+    const agent = await getAgentById("repair-agent");
     
     if (!agent) {
       return res.status(500).json({ error: "Product selection agent not found" });
@@ -1136,6 +1162,238 @@ app.get("/debug/agents/:agentId/instructions", async (req: Request, res: Respons
   }
 });
 
+// Zapier webhook endpoint for testing Google Sheets integration
+app.post("/api/zapier/webhook", async (req: Request, res: Response) => {
+  try {
+    console.log("🔗 Zapier webhook received:", JSON.stringify(req.body, null, 2));
+    
+    // Import the webhook handler
+    const { handleZapierWebhook, createTestWebhookData } = await import("./integrations/zapier-webhook.js");
+    
+    // Process the webhook data
+    const customer = await handleZapierWebhook(req.body);
+    
+    res.status(200).json({
+      success: true,
+      message: "Customer processed successfully",
+      customer: {
+        customerId: customer.customerId,
+        name: customer.name,
+        email: customer.email,
+        phone: customer.phone
+      }
+    });
+    
+  } catch (error) {
+    console.error("❌ Zapier webhook error:", error);
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : "Unknown error"
+    });
+  }
+});
+
+// Test endpoint to simulate Zapier webhook data
+app.post("/api/zapier/test", async (req: Request, res: Response) => {
+  try {
+    console.log("🧪 Testing Zapier webhook with sample data");
+    
+    // Import the webhook handler and test data
+    const { handleZapierWebhook, createTestWebhookData } = await import("./integrations/zapier-webhook.js");
+    
+    // Create test data that matches your Google Sheets structure
+    const testData = createTestWebhookData();
+    console.log("📊 Test data:", JSON.stringify(testData, null, 2));
+    
+    // Process the test data
+    const customer = await handleZapierWebhook(testData);
+    
+    res.status(200).json({
+      success: true,
+      message: "Test webhook processed successfully",
+      testData,
+      customer: {
+        customerId: customer.customerId,
+        name: customer.name,
+        email: customer.email,
+        phone: customer.phone
+      }
+    });
+    
+  } catch (error) {
+    console.error("❌ Test webhook error:", error);
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : "Unknown error"
+    });
+  }
+});
+
+// Test Zapier MCP connection and list available tools
+app.post("/api/zapier/mcp-test", async (req: Request, res: Response) => {
+  try {
+    console.log("🔧 Testing Zapier MCP connection and tools");
+    
+    // Import the MCP test functions
+    const { testZapierMcpConnection, getZapierMcpTools } = await import("./integrations/zapier-webhook.js");
+    
+    // Test connection
+    const connectionResult = await testZapierMcpConnection();
+    console.log("🔗 Connection test result:", connectionResult);
+    
+    // Get available tools
+    const toolsResult = await getZapierMcpTools();
+    console.log("🛠️ Tools test result:", toolsResult);
+    
+    res.status(200).json({
+      success: true,
+      message: "Zapier MCP test completed",
+      connection: connectionResult,
+      tools: toolsResult
+    });
+    
+  } catch (error) {
+    console.error("❌ Zapier MCP test error:", error);
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : "Unknown error"
+    });
+  }
+});
+
+// Test specific Zapier tools for online UI
+app.post("/api/zapier/test-tools", async (req: Request, res: Response) => {
+  try {
+    console.log("🧪 Testing specific Zapier tools for online UI");
+    
+    const { lookupCustomerByDetails, getCustomerHistory, getProductsByCustomerId } = await import("./integrations/zapier-tool-mapping.js");
+    
+    // Test customer lookup with NEW LOGIC (ANY 1 match from 3 details)
+    console.log("🔍 Testing NEW customer lookup logic - ANY 1 match from 3 details");
+    const customerResult = await lookupCustomerByDetails("044-1122-3344", "support@welcia-k.jp", "ウエルシア 川崎駅前店");
+    console.log("👤 Customer lookup result:", customerResult);
+    
+    // Test customer history
+    const historyResult = await getCustomerHistory("CUST003");
+    console.log("📋 History lookup result:", historyResult);
+    
+    // Test products lookup
+    const productsResult = await getProductsByCustomerId("CUST003");
+    console.log("📦 Products lookup result:", productsResult);
+    
+    res.status(200).json({
+      success: true,
+      message: "Zapier tools test completed for online UI",
+      newLogic: "ANY 1 match from 3 details is sufficient",
+      customerLookup: customerResult,
+      customerHistory: historyResult,
+      customerProducts: productsResult
+    });
+    
+  } catch (error) {
+    console.error("❌ Zapier tools test error:", error);
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : "Unknown error"
+    });
+  }
+});
+
+// Test repair webhook data
+app.post("/api/zapier/test-repairs", async (req: Request, res: Response) => {
+  try {
+    console.log("🔧 Testing repair webhook data");
+    
+    const { createTestRepairWebhookData, createTestRepairHistoryWebhookData } = await import("./integrations/zapier-webhook.js");
+    
+    // Test single repair record
+    const singleRepairData = createTestRepairWebhookData();
+    console.log("🔧 Single repair data:", singleRepairData);
+    
+    // Test repair history for customer
+    const repairHistoryData = createTestRepairHistoryWebhookData("CUST003");
+    console.log("📋 Repair history data:", repairHistoryData);
+    
+    res.status(200).json({
+      success: true,
+      message: "Repair webhook test completed",
+      singleRepair: singleRepairData,
+      repairHistory: repairHistoryData,
+      customerId: "CUST003"
+    });
+    
+  } catch (error) {
+    console.error("❌ Repair webhook test error:", error);
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : "Unknown error"
+    });
+  }
+});
+
+// Test logs webhook data (FINAL repair scheduling endpoint)
+app.post("/api/zapier/test-logs", async (req: Request, res: Response) => {
+  try {
+    console.log("📝 Testing logs webhook data (repair scheduling)");
+    
+    const { createTestLogsWebhookData, createTestRepairSchedulingWebhookData } = await import("./integrations/zapier-webhook.js");
+    
+    // Test basic logs data
+    const logsData = createTestLogsWebhookData("CUST003");
+    console.log("📝 Logs data:", logsData);
+    
+    // Test repair scheduling data (what UI will POST)
+    const schedulingData = createTestRepairSchedulingWebhookData(
+      "CUST003",
+      "コインが詰まる - 訪問修理が必要",
+      "高",
+      "要"
+    );
+    console.log("🔧 Repair scheduling data:", schedulingData);
+    
+    res.status(200).json({
+      success: true,
+      message: "Logs webhook test completed (repair scheduling)",
+      logsData: logsData,
+      repairScheduling: schedulingData,
+      customerId: "CUST003",
+      note: "This is the FINAL endpoint where UI POSTs repair scheduling data"
+    });
+    
+  } catch (error) {
+    console.error("❌ Logs webhook test error:", error);
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : "Unknown error"
+    });
+  }
+});
+
+
+// Test hybrid tool endpoint
+app.get('/api/test-hybrid-tool', async (req: Request, res: Response) => {
+  try {
+    const { LocalDatabaseService } = await import('./integrations/local-database.js');
+    const { hybridLookupCustomerByDetails } = await import('./mastra/tools/sanden/hybrid-customer-tools.js');
+    
+    // Test with the exact data from your example
+    const testResult = await hybridLookupCustomerByDetails.execute({
+      context: {
+        email: "repair@donki-shibuya.jp",
+        phone: "03-8765-4321",
+        companyName: "ドン・キホーテ 渋谷店"
+      }
+    });
+    
+    res.json({ 
+      success: true, 
+      testResult,
+      localTest: LocalDatabaseService.lookupCustomerByDetails("03-8765-4321", "repair@donki-shibuya.jp", "ドン・キホーテ 渋谷店")
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error instanceof Error ? error.message : "Unknown error" });
+  }
+});
 
 // Start the server on port 3000 for development (port 80 for production)
 const port = process.env.NODE_ENV === 'production' ? 80 : 3000;

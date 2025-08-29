@@ -35,55 +35,26 @@ import {
   getHelp, 
   zapierAiQuery 
 } from "../../tools/sanden/common-tools.js";
-import {
-  sendOtp,
-  verifyOtp,
-  resendOtp
-} from "../../tools/sanden/otp-tools.js";
-import { loadLangfusePrompt } from "../../prompts/langfuse.js";
-import { langfuse } from "../../../integrations/langfuse.js";
+// OTP tools removed - using direct customer identification workflow
+import { readFileSync } from 'fs';
+import { join } from 'path';
 
 // Agent factory function
 async function createRepairWorkflowOrchestrator(): Promise<Agent> {
   console.log("🔍 Creating Repair Workflow Orchestrator Agent...");
   
-  // Load Langfuse prompt with retry logic
+    // Load hardcoded prompt from file
   let instructions = "";
-  let attempts = 0;
-  const maxAttempts = 3;
-  
-  while (attempts < maxAttempts) {
-    attempts++;
-    try {
-      console.log(`🔍 Attempt ${attempts} to load prompt: repair-workflow-orchestrator`);
-      const loadedInstructions = await loadLangfusePrompt("repair-workflow-orchestrator", { label: "production" });
-      
-      if (loadedInstructions && loadedInstructions.trim().length > 100) {
-        instructions = loadedInstructions.trim();
-        console.log(`✅ Successfully loaded Langfuse instructions (length: ${instructions.length})`);
-        break;
-      } else {
-        console.warn(`⚠️ Attempt ${attempts}: Empty or too short Langfuse instructions (${loadedInstructions?.length || 0} chars)`);
-        if (attempts < maxAttempts) {
-          console.log(`🔄 Waiting 1 second before retry...`);
-          await new Promise(resolve => setTimeout(resolve, 1000));
-        }
-      }
-    } catch (error) {
-      console.error(`❌ Attempt ${attempts} failed:`, error);
-      if (attempts < maxAttempts) {
-        console.log(`🔄 Waiting 1 second before retry...`);
-        await new Promise(resolve => setTimeout(resolve, 1000));
-      }
-    }
+  try {
+    const promptPath = join(process.cwd(), 'src/mastra/prompts/orchestrator-prompt.txt');
+    instructions = readFileSync(promptPath, 'utf8').trim();
+    console.log(`✅ Successfully loaded hardcoded instructions (length: ${instructions.length})`);
+  } catch (error) {
+    console.error("❌ Failed to load hardcoded prompt:", error);
+    throw new Error("Failed to load orchestrator-prompt.txt");
   }
   
-  // Fail if no instructions loaded
-  if (!instructions || instructions.trim().length < 100) {
-    throw new Error("Failed to load repair-workflow-orchestrator instructions from Langfuse");
-  }
-  
-  console.log(`✅ Using instructions from Langfuse (length: ${instructions.length})`);
+  console.log(`✅ Using hardcoded instructions (length: ${instructions.length})`);
   
   // Create agent with loaded instructions
   const agent = new Agent({ 
@@ -110,26 +81,13 @@ async function createRepairWorkflowOrchestrator(): Promise<Agent> {
       getSystemInfo,
       getHelp,
       zapierAiQuery,
-      sendOtp,
-      verifyOtp,
-      resendOtp,
+      // OTP tools removed
       ...customerTools
     },
     memory: new Memory(),
   });
 
   console.log("✅ Repair Workflow Orchestrator Agent created with instructions length:", instructions.length);
-  
-  // Log the prompt to Langfuse tracing
-  try {
-    await langfuse.logPrompt("repair-workflow-orchestrator", 
-      instructions, 
-      "Agent created successfully"
-    );
-    console.log("✅ Prompt logged to Langfuse tracing");
-  } catch (error) {
-    console.warn("⚠️ Failed to log prompt to Langfuse:", error);
-  }
 
   return agent;
 }

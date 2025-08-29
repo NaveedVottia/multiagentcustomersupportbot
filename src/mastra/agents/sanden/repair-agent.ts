@@ -18,8 +18,14 @@ import {
   createProductTool, 
   updateProductTool, 
   searchProductsTool, 
-  checkWarrantyStatusTool 
+  checkWarrantyStatusTool
 } from "../../tools/sanden/product-tools.js";
+import { 
+  hybridGetProductsByCustomerId,
+  hybridGetRepairsByCustomerId,
+  hybridLookupCustomerByDetails,
+  hybridCreateLogEntry
+} from "../../tools/sanden/hybrid-customer-tools.js";
 import { 
   createRepairTool, 
   updateRepairTool, 
@@ -58,7 +64,12 @@ async function createRepairAgent(): Promise<Agent> {
       updateWorkflowState,
       getWorkflowState,
       logCustomerData,
-      lookupCustomerFromDatabase,
+      // Hybrid tools for real data
+      hybridLookupCustomerByDetails,
+      hybridGetProductsByCustomerId,
+      hybridGetRepairsByCustomerId,
+      hybridCreateLogEntry,
+      // Legacy tools (keep for compatibility)
       updateCustomer,
       getCustomerHistory,
       createProductTool,

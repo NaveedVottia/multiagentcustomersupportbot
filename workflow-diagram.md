@@ -1,4 +1,4 @@
-# Sanden Repair System - Accurate Workflow Diagram
+# Sanden Repair System - Current Workflow with Zapier MCP Integration
 
 ```mermaid
 flowchart TD
@@ -49,7 +49,7 @@ flowchart TD
     style V fill:#e8f5e8
 ```
 
-## Workflow Details
+## Updated Workflow Details with Zapier MCP Integration
 
 ### 1. User Input
 - User provides repair request information
@@ -73,55 +73,98 @@ The orchestrator uses the `delegateTo` tool to route to specific agents:
 - **Issue Details** → `repair-qa-agent-issue-analysis`
 - **Visit Confirmation** → `repair-visit-confirmation-agent`
 
-### 5. Specialized Agents
-Each agent has specific tools and responsibilities:
+### 5. Specialized Agents with Zapier MCP Tools
+Each agent now has specific Zapier MCP tools:
 
 #### Customer Identification Agent
-- **Tools**: Customer tools, common tools, orchestrator tools
-- **Output**: Customer data extraction
+- **Zapier Tools**: `Google Sheets: Lookup Spreadsheet Rows (Advanced)`
+- **Purpose**: Customer lookup by phone, email, company name
+- **Worksheet**: "Customers"
+- **Output**: Customer data extraction with Japanese column mapping
 
 #### Product Selection Agent
-- **Tools**: Product tools, common tools, orchestrator tools
+- **Zapier Tools**: `Google Sheets: Lookup Spreadsheet Rows (Advanced)`
+- **Purpose**: Product lookup by customer ID
+- **Worksheet**: "Products"
 - **Output**: Product data extraction
 
 #### Issue Analysis Agent
-- **Tools**: Repair tools, common tools, orchestrator tools
+- **Zapier Tools**: `Google Sheets: Lookup Spreadsheet Rows (Advanced)`
+- **Purpose**: Repair history lookup by customer ID
+- **Worksheet**: "repairs"
 - **Output**: Issue data extraction
 
 #### Visit Confirmation Agent
-- **Tools**: Repair tools, scheduling tools, common tools
-- **Output**: Repair record creation
+- **Zapier Tools**: `Google Calendar: Quick Add Event`
+- **Purpose**: Schedule repair visit appointments
+- **Output**: Calendar event creation
 
-### 6. Tool Calls & Data Flow
-- **delegateTo**: Routes to appropriate agent
-- **updateWorkflowState**: Updates workflow context
-- **logCustomerData**: Logs extracted data
-- **escalateToHuman**: Emergency escalation
-- **Zapier MCP**: Google Sheets integration for logging
+### 6. Zapier MCP Tool Integration Details
 
-### 7. Data Schema
-The workflow uses a unified context schema with Japanese field names:
-- **顧客ID**, **会社名**, **メールアドレス**, **電話番号**, **所在地**
-- **製品ID**, **製品カテゴリ**, **型式**, **シリアル番号**, **保証状況**
-- **問題内容**, **優先度**, **訪問要否**
-- **修理ID**, **日時**, **ステータス**, **対応者**
+#### Available Zapier MCP Tools
+1. **Google Sheets: Lookup Spreadsheet Rows (Advanced)**
+   - Used for: Customer, Product, and Repair data lookup
+   - Worksheets: Customers, Products, repairs, Logs
+   - Japanese column headers: 顧客ID, 会社名, メールアドレス, 電話番号, 所在地
+
+2. **Google Sheets: Get Many Spreadsheet Rows (Advanced)**
+   - Used for: Bulk data retrieval
+   - Fallback when specific lookups fail
+
+3. **Google Sheets: Create Spreadsheet Row**
+   - Used for: New customer registration
+   - New repair ticket creation
+   - Logging activities
+
+4. **Google Sheets: Update Spreadsheet Row**
+   - Used for: Updating customer information
+   - Updating repair status
+
+5. **Google Calendar: Quick Add Event**
+   - Used for: Scheduling repair visits
+   - Creating appointment events
+
+6. **AI by Zapier: Extract Content From URL (Beta)**
+   - Used for: Content extraction from external sources
+
+#### Tool Usage in Prompts
+- **customer-identification-prompt.txt**: Line 35 - `lookupCustomerByDetails(phone, email, companyName)`
+- **repair-agent-prompt.txt**: Line 40 - `getCustomerHistory(customerId)`, Line 45 - `getProductsByCustomerId(customerId)`
+- **repair-scheduling-prompt.txt**: `scheduleRepairVisit(customerId, productId, issue)`
+
+### 7. Data Schema with Japanese Column Mapping
+The workflow uses exact Japanese column headers from Google Sheets:
+
+#### Customers Worksheet
+- **顧客ID** (COL$A), **会社名** (COL$B), **メールアドレス** (COL$C), **電話番号** (COL$D), **所在地** (COL$E)
+
+#### Products Worksheet  
+- **製品ID** (COL$A), **顧客ID** (COL$B), **製品カテゴリ** (COL$C), **型式** (COL$D), **シリアル番号** (COL$E), **保証状況** (COL$F)
+
+#### Repairs Worksheet
+- **Repair ID** (COL$A), **日時** (COL$B), **製品ID** (COL$C), **顧客ID** (COL$D), **問題内容** (COL$E), **ステータス** (COL$F), **訪問要否** (COL$G), **優先度** (COL$H), **対応者** (COL$I)
 
 ### 8. Emergency Handling
 - Automatic keyword detection in user input
 - Immediate escalation via `escalateToHuman` tool
-- Emergency logs sent to Google Sheets
+- Emergency logs sent to Google Sheets via Zapier MCP
 - Human support notification
 
 ### 9. Completion
-- All data extracted and logged
-- Repair record created
+- All data extracted and logged via Zapier MCP
+- Repair record created in Google Sheets
+- Calendar appointments scheduled
 - Workflow status marked as completed
 - Session tracking maintained throughout
 
-## Key Differences from Conceptual Diagram
+## Key Updates from Previous Version
 
-1. **Sequential vs. Branching**: Actual implementation is more sequential with the orchestrator managing flow
-2. **Single Orchestrator**: One main agent coordinates all activities rather than separate decision branches
-3. **Tool-Based Routing**: Uses `delegateTo` tool for agent routing rather than direct branching
-4. **Unified Context**: Single workflow context schema flows through all steps
-5. **Emergency Detection**: Built into the external API stream step, not a separate decision branch
+1. **Zapier MCP Integration**: Added specific tool mappings and usage
+2. **Japanese Column Headers**: Exact mapping to Google Sheets structure
+3. **Tool Functions**: Implemented specific functions for each Zapier tool
+4. **Prompt Integration**: Updated tool usage in all prompt files
+5. **Data Flow**: Clear path from agents to Zapier MCP to Google Sheets
+6. **Calendar Integration**: Added Google Calendar for scheduling
+7. **Error Handling**: Fallback strategies for failed lookups
+
+

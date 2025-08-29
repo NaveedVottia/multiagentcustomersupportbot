@@ -441,6 +441,27 @@ export const customerTools = {
       rawInput: z.string().optional().describe("Optional raw login line to extract CUST### from"),
       preferId: z.boolean().optional().describe("Prefer customerId over other fields when available (default true)"),
     }),
+    outputSchema: z.object({
+      success: z.boolean(),
+      message: z.string().optional(),
+      matchCount: z.number().optional(),
+      matches: z
+        .object({ phone: z.boolean().optional(), email: z.boolean().optional(), companyName: z.boolean().optional() })
+        .optional(),
+      customer: z
+        .object({
+          customerId: z.string().optional(),
+          companyName: z.string().optional(),
+          email: z.string().optional(),
+          phone: z.string().optional(),
+          location: z.string().optional(),
+        })
+        .optional(),
+      candidates: z.array(z.record(z.any())).optional(),
+      // Back-compat: many prompts/tools expect a 'data' array like Zapier rows
+      data: z.array(z.record(z.any())).optional(),
+      matchedBy: z.array(z.enum(["phone","email","companyName","customerId"])) .optional(),
+    }),
     execute: async ({ context, writer }: { context: any; writer?: any }) => {
       const { customerId, companyName, email, phone, sessionId, rawInput, preferId } = context;
 
@@ -555,16 +576,49 @@ export const customerTools = {
           }
         }
         if (results.length) {
-          return {
-            success: true,
-            message: `${results.length}件のお客様が見つかりました。`,
-            data: results,
+          const norm = {
+            phone: String(phone || "").replace(/\D/g, ""),
+            email: String(email || "").trim().toLowerCase(),
+            company: String(normalizedCompanyName || companyName || "").replace(/\s+/g, "").trim(),
           };
+          const mapRow = (r: any) => ({
+            customerId: r?.["COL$A"] || r?.顧客ID || "",
+            companyName: r?.["COL$B"] || r?.会社名 || "",
+            email: r?.["COL$C"] || r?.メールアドレス || "",
+            phone: r?.["COL$D"] || r?.電話番号 || "",
+            location: r?.["COL$E"] || r?.所在地 || "",
+          });
+          const scored = results.map((r: any) => {
+            const rec = mapRow(r);
+            const recPhone = String(rec.phone || "").replace(/\D/g, "");
+            const recEmail = String(rec.email || "").trim().toLowerCase();
+            const recCompany = String(rec.companyName || "").replace(/\s+/g, "").trim();
+            const mPhone = !!(norm.phone && recPhone && recPhone === norm.phone);
+            const mEmail = !!(norm.email && recEmail && recEmail === norm.email);
+            const mCompany = !!(norm.company && recCompany && (recCompany.includes(norm.company) || norm.company.includes(recCompany)));
+            const matchedBy: string[] = [];
+            if (mPhone) matchedBy.push("phone");
+            if (mEmail) matchedBy.push("email");
+            if (mCompany) matchedBy.push("companyName");
+            return { rec, matches: { phone: mPhone, email: mEmail, companyName: mCompany }, matchCount: [mPhone, mEmail, mCompany].filter(Boolean).length, matchedBy };
+          });
+          scored.sort((a, b) => b.matchCount - a.matchCount);
+          const best = scored[0];
+          return {
+            success: (best?.matchCount ?? 0) > 0,
+            message: `best_match:${best?.matchCount ?? 0}/3` ,
+            matchCount: best?.matchCount ?? 0,
+            matches: best?.matches || {},
+            customer: best?.rec,
+            candidates: results.map(mapRow),
+            data: results.map(mapRow),
+            matchedBy: best?.matchedBy || [],
+          } as any;
         } else {
           return {
             success: false,
             message: "指定された条件に一致するお客様が見つかりませんでした。",
-            data: null,
+            candidates: [],
             missingFields: [],
             askNext: undefined,
           };

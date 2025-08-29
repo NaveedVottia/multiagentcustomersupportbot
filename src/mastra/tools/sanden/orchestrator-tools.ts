@@ -53,9 +53,9 @@ export const delegateTo = createTool({
   description: "Delegates to another agent and pipes their stream back",
   // Accept both strict and loose calls; default to customer-identification
   inputSchema: z.object({ agentId: z.string().optional(), message: z.string().optional(), context: z.record(z.any()).optional() }),
-  outputSchema: z.object({ ok: z.boolean(), agentId: z.string(), extractedData: z.any().optional() }),
+  outputSchema: z.object({ ok: z.boolean(), agentId: z.string(), responseText: z.string().optional(), extractedData: z.any().optional() }),
   async execute(args: ToolExecuteArgs) {
-    const { writer, mastra } = args as any;
+    const { mastra } = args as any;
     const parsed = getArgs(args) as { agentId?: string; message?: string; context?: Record<string, any> };
     const agentId = parsed.agentId || "routing-agent-customer-identification";
     const agentContext = parsed.context;
@@ -69,66 +69,23 @@ export const delegateTo = createTool({
         { role: "system", content: `Context: ${JSON.stringify(agentContext || {})}` },
         { role: "user", content: message },
       ];
-      const stream = await agent.stream(messages);
-      let fullResponse = "";
-      if (stream) {
-        for await (const chunk of stream.textStream) {
-          // SANITIZE CHUNKS BEFORE WRITING TO UI
-          let sanitizedChunk = chunk;
-          if (typeof chunk === "string") {
-            sanitizedChunk = sanitizeResponse(chunk);
-            fullResponse += chunk; // Keep original for data extraction
-          }
-          
-          if (writer) writer.write(sanitizedChunk);
-        }
-      }
+      const generated = await agent.generate(messages as any);
+      const fullResponse = typeof generated?.text === "string" ? generated.text : "";
       let extractedData = null;
       if (agentId === "routing-agent-customer-identification") extractedData = extractDataFromResponse(fullResponse, "CUSTOMER");
-      else if (agentId === "repair-agent-product-selection") extractedData = extractDataFromResponse(fullResponse, "PRODUCT");
-      else if (agentId === "repair-qa-agent-issue-analysis") extractedData = extractDataFromResponse(fullResponse, "ISSUE");
-      else if (agentId === "repair-visit-confirmation-agent") extractedData = extractDataFromResponse(fullResponse, "REPAIR");
+      else if (agentId === "repair-agent") extractedData = extractDataFromResponse(fullResponse, "PRODUCT");
+      else if (agentId === "repair-history-ticket-agent") extractedData = extractDataFromResponse(fullResponse, "ISSUE");
+      else if (agentId === "repair-scheduling-agent") extractedData = extractDataFromResponse(fullResponse, "REPAIR");
+      // Note: Do not auto-log or auto-lookup here. Zapier calls must occur only after explicit user confirmation.
       
-      // Automatically log customer data when extracted
-      if (extractedData && agentId === "routing-agent-customer-identification") {
-        try {
-          const instance = (mastra as any) || mastraInstance;
-          if (instance?.tools?.logCustomerData) {
-            await instance.tools.logCustomerData.execute({ customerData: extractedData, source: "customer-identification" });
-          }
-          
-          // Also try to look up real customer data from database if store name is mentioned
-          if (extractedData.storeName || extractedData.name) {
-            try {
-              if (instance?.tools?.lookupCustomerFromDatabase) {
-                const lookupResult = await instance.tools.lookupCustomerFromDatabase.execute({ 
-                  storeName: extractedData.storeName || extractedData.name,
-                  searchType: "store_name"
-                });
-                
-                if (lookupResult.found && lookupResult.customerData) {
-                  console.log("Found real customer data from database:", lookupResult.customerData);
-                  // Replace the fake data with real data
-                  extractedData = { ...extractedData, ...lookupResult.customerData };
-                }
-              }
-            } catch (error) {
-              console.error("Failed to lookup customer data from database:", error);
-            }
-          }
-        } catch (error) {
-          console.error("Failed to auto-log customer data:", error);
-        }
-      }
-      
-      await langfuse.logToolExecution(traceId, "delegateTo", { agentId, messageLength: message?.length || 0 }, { ok: true, agentId, extractedData }, { extractedKeys: extractedData ? Object.keys(extractedData) : [] });
+      await langfuse.logToolExecution(traceId, "delegateTo", { agentId, messageLength: message?.length || 0 }, { ok: true, agentId, responseText: sanitizeResponse(fullResponse), extractedData }, { extractedKeys: extractedData ? Object.keys(extractedData) : [] });
       await langfuse.endTrace(traceId, { success: true });
-      return { ok: true, agentId, extractedData };
+      return { ok: true, agentId, responseText: sanitizeResponse(fullResponse), extractedData };
     } catch (error) {
       // Do not stream internal errors to user; return neutral failure
-      await langfuse.logToolExecution(null, "delegateTo", { agentId }, { ok: false }, { error: String(error) });
+      await langfuse.logToolExecution(null, "delegateTo", { agentId }, { ok: false, responseText: "" }, { error: String(error) });
       await langfuse.endTrace(null, { success: false });
-      return { ok: false, agentId, extractedData: null as any };
+      return { ok: false, agentId, responseText: "", extractedData: null as any };
     }
   },
 });
@@ -229,11 +186,7 @@ export const getWorkflowState = createTool({
       handoff_failures: 0,
       last_user_turn_id: "",
       session_started_epoch: Date.now(),
-      otp_attempts: 0,
-      otp_locked: false,
-      otp_lock_until_epoch: 0,
-      otp_last_sent_epoch: 0,
-      otp_last_channel: "",
+      // OTP fields removed
       user_timezone: "Asia/Tokyo"
     };
     

@@ -1,9 +1,11 @@
 import { Agent } from "@mastra/core/agent";
 import { Memory } from "@mastra/memory";
 import { bedrock } from "@ai-sdk/amazon-bedrock";
-import { customerTools } from "../../tools/sanden/customer-tools.js";
-import { commonTools } from "../../tools/sanden/common-tools.js";
-import { orchestratorTools } from "../../tools/sanden/orchestrator-tools.js";
+import { createTool } from "@mastra/core/tools";
+import { z } from "zod";
+// Removed unused imports to prevent conflicts
+import { delegateTo } from "../../tools/sanden/orchestrator-tools.js";
+import { hybridLookupCustomerByDetails, hybridRegisterCustomer } from "../../tools/sanden/hybrid-customer-tools.js";
 import { readFileSync } from 'fs';
 import { join } from 'path';
 
@@ -31,14 +33,60 @@ async function createCustomerIdentificationAgent(): Promise<Agent> {
     instructions: instructions,
     model: bedrock("anthropic.claude-3-5-sonnet-20240620-v1:0"),
     tools: {
-      ...customerTools,
-      ...commonTools,
-      ...orchestratorTools,
+      // Hybrid tools (Zapier first, local fallback)
+      hybridLookupCustomerByDetails,
+      hybridRegisterCustomer,
+      // Simple input validation without external calls
+      sanitizeInput: createTool({
+        id: "sanitizeInput",
+        description: "Simple input validation without external calls",
+        inputSchema: z.object({
+          input: z.string().describe("Input to validate"),
+          type: z.enum(["email", "phone", "companyName"]).describe("Type of input"),
+        }),
+        outputSchema: z.object({
+          success: z.boolean(),
+          message: z.string(),
+          sanitizedInput: z.string(),
+        }),
+        execute: async ({ context }: { context: any }) => {
+          const { input, type } = context;
+          let sanitizedInput = input.trim();
+          let isValid = false;
+          let message = "";
+
+          switch (type) {
+            case "email":
+              const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+              isValid = emailRegex.test(sanitizedInput);
+              message = isValid ? "メールアドレスが有効です。" : "メールアドレスの形式が正しくありません。";
+              break;
+            case "phone":
+              const cleanPhone = sanitizedInput.replace(/\D/g, '');
+              isValid = cleanPhone.length >= 10 && cleanPhone.length <= 20;
+              message = isValid ? "電話番号が有効です。" : "電話番号は10桁から20桁で入力してください。";
+              break;
+            case "companyName":
+              isValid = sanitizedInput.length >= 2 && sanitizedInput.length <= 100;
+              message = isValid ? "会社名が有効です。" : "会社名は2文字以上100文字以内で入力してください。";
+              break;
+          }
+
+          return {
+            success: isValid,
+            message,
+            sanitizedInput,
+          };
+        },
+      }),
+      // Only essential tools for customer identification
+      delegateTo,
     },
     memory: new Memory(),
   });
 
   console.log("✅ Customer Identification Agent created with instructions length:", instructions.length);
+  console.log("🔧 Agent tools configured:", Object.keys(agent.tools));
   return agent;
 }
 
