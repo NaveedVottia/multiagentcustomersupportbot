@@ -1067,6 +1067,59 @@ app.post("/api/agents/repair-scheduling/stream", async (req: Request, res: Respo
   }
 });
 
+// New endpoint for executing the complete repair workflow
+app.post("/api/workflows/repair-workflow/execute", async (req: Request, res: Response) => {
+  try {
+    const { customerDetails } = req.body;
+    const sessionId = req.headers['x-session-id'] as string || `session_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    
+    console.log(`🚀 Executing complete repair workflow for session ${sessionId}`);
+    console.log(`📋 Customer details:`, customerDetails);
+    
+    // Get the Mastra instance
+    const mastraInstance = await mastra;
+    if (!mastraInstance) {
+      return res.status(500).json({ error: "Mastra instance not available" });
+    }
+    
+    // Get the repair workflow
+    const workflow = mastraInstance.workflows?.repairWorkflow;
+    if (!workflow) {
+      return res.status(500).json({ error: "Repair workflow not found" });
+    }
+    
+    // Execute the workflow
+    console.log(`🔄 Starting workflow execution...`);
+    const result = await workflow.execute({
+      customerDetails: {
+        email: customerDetails.email,
+        phone: customerDetails.phone,
+        company: customerDetails.company,
+      }
+    });
+    
+    console.log(`✅ Workflow completed successfully`);
+    console.log(`📊 Result:`, JSON.stringify(result, null, 2));
+    
+    // Return the complete workflow result
+    res.json({
+      success: true,
+      sessionId,
+      workflowResult: result,
+      message: "Complete repair workflow executed successfully",
+      timestamp: new Date().toISOString(),
+    });
+    
+  } catch (error) {
+    console.error(`❌ Workflow execution failed:`, error);
+    res.status(500).json({
+      error: "Workflow execution failed",
+      details: error instanceof Error ? error.message : "Unknown error",
+      timestamp: new Date().toISOString(),
+    });
+  }
+});
+
 // Debug endpoint to check agent status
 app.get("/debug/agents/:agentId", async (req: Request, res: Response) => {
   try {
