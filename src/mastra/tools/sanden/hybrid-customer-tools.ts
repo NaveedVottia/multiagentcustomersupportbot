@@ -345,9 +345,9 @@ export const hybridGetRepairsByCustomerId = createTool({
       // Try to get repairs via Zapier
       const zapierResult = await zapierClient.callTool("google_sheets_lookup_spreadsheet_rows_advanced", {
         instructions: `Get all repairs for customer ID: ${customerId}`,
-        worksheet: "repairs",
+        worksheet: "Repairs",
         row_count: "50", // Zapier expects string
-        lookup_key: "COL$D", // Use exact column reference for 顧客ID (4th column in repairs sheet)
+        lookup_key: "顧客ID", // Use Japanese column name for customer ID
         lookup_value: customerId,
       });
       

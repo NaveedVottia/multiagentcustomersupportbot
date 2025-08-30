@@ -1561,6 +1561,249 @@ app.post("/api/test/zapier-products", async (req: Request, res: Response) => {
   }
 });
 
+// Simple HTML UI endpoint
+app.get("/", (req: Request, res: Response) => {
+  res.send(`
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>サンデン・リテールシステム 修理サービス</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .chat-container {
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            height: 500px;
+            display: flex;
+            flex-direction: column;
+        }
+        .chat-header {
+            background: #2c3e50;
+            color: white;
+            padding: 15px;
+            border-radius: 10px 10px 0 0;
+            text-align: center;
+        }
+        .chat-messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+        }
+        .message {
+            margin-bottom: 15px;
+            padding: 10px 15px;
+            border-radius: 10px;
+            max-width: 80%;
+        }
+        .user-message {
+            background: #3498db;
+            color: white;
+            margin-left: auto;
+        }
+        .assistant-message {
+            background: #ecf0f1;
+            color: #2c3e50;
+            white-space: pre-wrap;
+        }
+        .input-container {
+            padding: 20px;
+            border-top: 1px solid #ddd;
+            display: flex;
+            gap: 10px;
+        }
+        .message-input {
+            flex: 1;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 16px;
+        }
+        .send-button {
+            padding: 10px 20px;
+            background: #2c3e50;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        .send-button:hover {
+            background: #34495e;
+        }
+        .menu-options {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+            flex-wrap: wrap;
+        }
+        .menu-button {
+            padding: 8px 16px;
+            background: #3498db;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .menu-button:hover {
+            background: #2980b9;
+        }
+    </style>
+</head>
+<body>
+    <div class="chat-container">
+        <div class="chat-header">
+            <h2>サンデン・リテールシステム 修理サービス</h2>
+        </div>
+        <div class="chat-messages" id="chatMessages">
+            <div class="message assistant-message" id="initialMessage">
+                <div id="mainMenu"></div>
+            </div>
+        </div>
+        <div class="input-container">
+            <input type="text" id="messageInput" class="message-input" placeholder="メッセージを入力してください..." />
+            <button onclick="sendMessage()" class="send-button">送信</button>
+        </div>
+    </div>
+
+    <script>
+        let sessionId = 'session_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+        let conversationHistory = [];
+        
+        // Initialize with main menu
+        window.onload = function() {
+            showMainMenu();
+        };
+
+        function showMainMenu() {
+            const mainMenu = document.getElementById('mainMenu');
+            const menuText = \`はい、サンデン・リテールシステムのAIアシスタントです。ご用件をお選びください。番号でお答えください。直接入力も可能です。
+
+1. 修理受付・修理履歴・修理予約
+
+2. 一般的なFAQ
+
+3. リクエスト送信用オンラインフォーム
+
+番号でお選びください。直接入力も可能です。\`;
+            
+            mainMenu.innerHTML = menuText;
+            
+            // Add to conversation history
+            conversationHistory.push({
+                role: 'assistant',
+                content: menuText
+            });
+        }
+
+        function addMessage(content, isUser = false) {
+            const chatMessages = document.getElementById('chatMessages');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = \`message \${isUser ? 'user-message' : 'assistant-message'}\`;
+            messageDiv.textContent = content;
+            chatMessages.appendChild(messageDiv);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+            
+            // Add to conversation history
+            conversationHistory.push({
+                role: isUser ? 'user' : 'assistant',
+                content: content
+            });
+        }
+
+        function addMenuOptions(options) {
+            const chatMessages = document.getElementById('chatMessages');
+            const optionsDiv = document.createElement('div');
+            optionsDiv.className = 'menu-options';
+            
+            options.forEach(option => {
+                const button = document.createElement('button');
+                button.className = 'menu-button';
+                button.textContent = option;
+                button.onclick = () => sendMessage(option);
+                optionsDiv.appendChild(button);
+            });
+            
+            chatMessages.appendChild(optionsDiv);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+
+        async function sendMessage(message = null) {
+            const input = document.getElementById('messageInput');
+            const messageText = message || input.value.trim();
+            
+            if (!messageText) return;
+            
+            // Add user message
+            addMessage(messageText, true);
+            input.value = '';
+            
+            try {
+                const response = await fetch('/api/agents/repair-workflow-orchestrator/stream', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Session-ID': sessionId
+                    },
+                    body: JSON.stringify({
+                        messages: conversationHistory
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error(\`HTTP error! status: \${response.status}\`);
+                }
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let assistantMessage = '';
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    const chunk = decoder.decode(value);
+                    const lines = chunk.split('\\n');
+
+                    for (const line of lines) {
+                        if (line.startsWith('0:"')) {
+                            const char = line.substring(3, line.length - 1);
+                            assistantMessage += char;
+                        }
+                    }
+                }
+
+                if (assistantMessage.trim()) {
+                    addMessage(assistantMessage);
+                }
+
+            } catch (error) {
+                console.error('Error:', error);
+                addMessage('エラーが発生しました。もう一度お試しください。');
+            }
+        }
+
+        // Enter key to send message
+        document.getElementById('messageInput').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                sendMessage();
+            }
+        });
+    </script>
+</body>
+</html>
+  `);
+});
+
 // Start the server on port 3000 for development (port 80 for production)
 const port = process.env.NODE_ENV === 'production' ? 80 : 3000;
 const server = app.listen(port, () => {
