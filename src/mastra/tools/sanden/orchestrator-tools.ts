@@ -57,7 +57,7 @@ export const delegateTo = createTool({
   async execute(args: ToolExecuteArgs) {
     const { writer, mastra } = args as any;
     const parsed = getArgs(args) as { agentId?: string; message?: string; context?: Record<string, any> };
-    const agentId = parsed.agentId || "routing-agent-customer-identification";
+    const agentId = parsed.agentId || "customer-identification";
     const agentContext = parsed.context;
     const message = parsed.message || "顧客情報の確認をお願いします。";
     const traceId = await langfuse.startTrace("tool.delegateTo", { agentId, hasContext: !!agentContext });
@@ -84,13 +84,13 @@ export const delegateTo = createTool({
         }
       }
       let extractedData = null;
-      if (agentId === "routing-agent-customer-identification") extractedData = extractDataFromResponse(fullResponse, "CUSTOMER");
-      else if (agentId === "repair-agent-product-selection") extractedData = extractDataFromResponse(fullResponse, "PRODUCT");
-      else if (agentId === "repair-qa-agent-issue-analysis") extractedData = extractDataFromResponse(fullResponse, "ISSUE");
-      else if (agentId === "repair-visit-confirmation-agent") extractedData = extractDataFromResponse(fullResponse, "REPAIR");
+      if (agentId === "customer-identification") extractedData = extractDataFromResponse(fullResponse, "CUSTOMER");
+      else if (agentId === "repair-agent") extractedData = extractDataFromResponse(fullResponse, "PRODUCT");
+      else if (agentId === "repair-history-ticket") extractedData = extractDataFromResponse(fullResponse, "ISSUE");
+      else if (agentId === "repair-scheduling") extractedData = extractDataFromResponse(fullResponse, "REPAIR");
       
       // Automatically log customer data when extracted
-      if (extractedData && agentId === "routing-agent-customer-identification") {
+      if (extractedData && agentId === "customer-identification") {
         try {
           const instance = (mastra as any) || mastraInstance;
           if (instance?.tools?.logCustomerData) {
@@ -130,6 +130,29 @@ export const delegateTo = createTool({
       await langfuse.endTrace(null, { success: false });
       return { ok: false, agentId, extractedData: null as any };
     }
+  },
+});
+
+// Add forceDelegation tool that maps to delegateTo for Langfuse prompt compatibility
+export const forceDelegation = createTool({
+  id: "forceDelegation",
+  description: "Force delegation to another agent (alias for delegateTo)",
+  inputSchema: z.object({ agentId: z.string().optional(), message: z.string().optional(), context: z.record(z.any()).optional() }),
+  outputSchema: z.object({ ok: z.boolean(), agentId: z.string(), extractedData: z.any().optional() }),
+  async execute(args: ToolExecuteArgs) {
+    console.log("🔧 forceDelegation tool called with args:", JSON.stringify(args, null, 2));
+    
+    // Parse the arguments
+    const parsed = getArgs(args) as { agentId?: string; message?: string; context?: Record<string, any> };
+    const agentId = parsed.agentId || "customer-identification";
+    const message = parsed.message || "顧客情報の確認をお願いします。";
+    
+    console.log("🔧 forceDelegation delegating to agent:", agentId, "with message:", message);
+    
+    // Call delegateTo with the parsed arguments
+    const result = await delegateTo.execute(args);
+    console.log("🔧 forceDelegation tool result:", JSON.stringify(result, null, 2));
+    return result;
   },
 });
 
@@ -243,6 +266,7 @@ export const lookupCustomerFromDatabase = createTool({
       // Try each search query
       for (const query of searchQueries) {
         try {
+          console.log(`🔍 [DEBUG] Searching with query: "${query}"`);
           const result = await zapierMcp.callTool("google_sheets_lookup_spreadsheet_rows_advanced", {
             instructions: `Look up customer data by ${searchType} with query: ${query}`,
             worksheet: "Customers",
@@ -251,26 +275,66 @@ export const lookupCustomerFromDatabase = createTool({
             row_count: "5"
           });
           
-          if (result && result.length > 0) {
-            // Find the best match
-            const bestMatch = result.find((row: any) => {
-              const companyName = row["会社名"] || "";
-              return companyName.includes("ウエルシア") && companyName.includes("川崎");
-            }) || result[0];
+          console.log(`🔍 [DEBUG] Zapier result:`, JSON.stringify(result, null, 2));
+          
+          // Handle different possible result structures
+          let rows = [];
+          
+          // First, try to extract from content[0].text if it's a JSON string
+          if (result && result.content && Array.isArray(result.content) && result.content[0] && result.content[0].text) {
+            try {
+              console.log(`🔍 [DEBUG] Found content[0].text, parsing JSON...`);
+              const parsedContent = JSON.parse(result.content[0].text);
+              console.log(`🔍 [DEBUG] Parsed content:`, JSON.stringify(parsedContent, null, 2));
+              
+              if (parsedContent && parsedContent.results && Array.isArray(parsedContent.results) && parsedContent.results[0] && parsedContent.results[0].rows) {
+                rows = parsedContent.results[0].rows;
+                console.log(`🔍 [DEBUG] Extracted rows from parsed content:`, JSON.stringify(rows, null, 2));
+              }
+            } catch (parseError) {
+              console.log(`❌ [DEBUG] Failed to parse content[0].text as JSON:`, parseError);
+            }
+          }
+          
+          // Fallback to original logic if content parsing didn't work
+          if (rows.length === 0) {
+            if (result && result["0"] && result["0"].rows) {
+              rows = result["0"].rows;
+            } else if (result && Array.isArray(result)) {
+              rows = result;
+            } else if (result && result.rows) {
+              rows = result.rows;
+            } else if (result && result.results && result.results[0] && result.results[0].rows) {
+              rows = result.results[0].rows;
+            }
+          }
+          
+          console.log(`🔍 [DEBUG] Final extracted rows:`, JSON.stringify(rows, null, 2));
+          
+          if (rows && rows.length > 0) {
+            console.log(`✅ [DEBUG] Found ${rows.length} rows`);
+            // Find the best match - for ドン・キホーテ, just take the first match
+            const bestMatch = rows[0];
+            
+            console.log(`🔍 [DEBUG] Best match:`, JSON.stringify(bestMatch, null, 2));
             
             const customerData = {
-              customerId: bestMatch["顧客ID"],
-              storeName: bestMatch["会社名"],
-              email: bestMatch["メールアドレス"],
-              phone: bestMatch["電話番号"],
-              location: bestMatch["所在地"],
+              customerId: bestMatch["COL$A"] || bestMatch["顧客ID"] || bestMatch["id"],
+              storeName: bestMatch["COL$B"] || bestMatch["会社名"] || bestMatch["storeName"],
+              email: bestMatch["COL$C"] || bestMatch["メールアドレス"] || bestMatch["email"],
+              phone: bestMatch["COL$D"] || bestMatch["電話番号"] || bestMatch["phone"],
+              location: bestMatch["COL$E"] || bestMatch["所在地"] || bestMatch["location"],
               found: true
             };
+            
+            console.log(`✅ [DEBUG] Customer data:`, JSON.stringify(customerData, null, 2));
             
             const res = { success: true, customerData, found: true };
             await langfuse.logToolExecution(traceId, "lookupCustomerFromDatabase", { storeName, searchType, matchedQuery: query }, res);
             await langfuse.endTrace(traceId, { success: true });
             return res;
+          } else {
+            console.log(`❌ [DEBUG] No rows found in result:`, JSON.stringify(result, null, 2));
           }
         } catch (error) {
           console.error(`Failed to search with query "${query}":`, error);

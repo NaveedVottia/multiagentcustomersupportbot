@@ -17,58 +17,72 @@ console.log("LANGFUSE_SECRET_KEY:", process.env.LANGFUSE_SECRET_KEY ? "✅ Set" 
 
 // Import all agents
 import { routingAgentCustomerIdentification } from "./agents/sanden/customer-identification";
-import { workingOrchestratorAgent } from "./agents/sanden/working-orchestrator";
 import { repairAgentProductSelection } from "./agents/sanden/product-selection";
 import { repairQaAgentIssueAnalysis } from "./agents/sanden/issue-analysis";
 import { repairVisitConfirmationAgent } from "./agents/sanden/visit-confirmation";
 
-// Import the setter for Mastra instance
-import { setMastraInstance } from "./tools/sanden/orchestrator-tools";
-
-export const mastra = new Mastra({
-  // No workflows needed - just agents
-  agents: {
-    // Main orchestrator agent - this is what the UI expects
-    "repair-workflow-orchestrator": workingOrchestratorAgent,
+// Create agents asynchronously
+async function createMastraInstance() {
+  const mastra = new Mastra({
+    // No workflows needed - just agents
+    agents: {
+      // Main customer identification agent - entry point
+      "customer-identification": routingAgentCustomerIdentification,
+      
+      // Sub-agents (accessed via delegateTo tool)
+      "repair-agent": repairAgentProductSelection,
+      "repair-history-ticket": repairQaAgentIssueAnalysis,
+      "repair-scheduling": repairVisitConfirmationAgent,
+    },
     
-    // Sub-agents (accessed internally by orchestrator via delegateTo tool)
-    "routing-agent-customer-identification": routingAgentCustomerIdentification,
-    "repair-agent-product-selection": repairAgentProductSelection,
-    "repair-qa-agent-issue-analysis": repairQaAgentIssueAnalysis,
-    "repair-visit-confirmation-agent": repairVisitConfirmationAgent,
-  },
+    storage: new LibSQLStore({
+      url: process.env.DATABASE_URL || ":memory:",
+    }),
+    
+    logger: new PinoLogger({
+      name: "Sanden Repair System",
+      level: "info",
+    }),
+  });
+
+  console.log("✅ Mastra instance created with 4 agents");
+  console.log("✅ Main endpoint: POST /api/agents/customer-identification/stream");
+  console.log("✅ Customer identification agent ready");
+
+  // Debug: Check what agents are actually available
+  console.log("🔍 Debug: Available agents in Mastra instance:");
+  console.log("mastra.agents keys:", Object.keys(mastra.agents || {}));
+  console.log("mastra.getAgentById available:", typeof mastra.getAgentById === 'function');
+  console.log("Agent count:", Object.keys(mastra.agents || {}).length);
   
-  storage: new LibSQLStore({
-    url: process.env.DATABASE_URL || ":memory:",
-  }),
-  
-  logger: new PinoLogger({
-    name: "Sanden Repair System",
-    level: "info",
-  }),
-});
+  // Test getting agents by ID
+  const knownAgents = ["customer-identification", "repair-agent", "repair-history-ticket", "repair-scheduling"];
+  console.log("🔍 Testing agent access by ID:");
+  for (const id of knownAgents) {
+    const agent = mastra.getAgentById(id);
+    if (agent) {
+      console.log(`✅ Agent '${id}' found via getAgentById`);
+    } else {
+      console.log(`❌ Agent '${id}' NOT found via getAgentById`);
+    }
+  }
 
-// Set the Mastra instance for tools to use
-setMastraInstance(mastra);
-
-console.log("✅ Mastra instance created with 5 agents");
-console.log("✅ Main endpoint: POST /api/agents/repair-workflow-orchestrator/stream");
-console.log("✅ Repair workflow orchestrator ready");
-
-// Test the connection using the correct v0.13.2 API
-if (mastra.getAgentById("repair-workflow-orchestrator")) {
-  console.log("✅ Repair workflow orchestrator verified");
+  return mastra;
 }
 
-// Debug: Check what agents are actually available
-console.log("🔍 Debug: Available agents in Mastra instance:");
-console.log("mastra.agents keys:", Object.keys(mastra.agents || {}));
-console.log("mastra.getAgentById available:", typeof mastra.getAgentById === 'function');
-console.log("Agent count:", Object.keys(mastra.agents || {}).length);
+// Export the promise that resolves to the mastra instance
+export const mastraPromise = createMastraInstance();
+
+// For backward compatibility, export a getter that waits for the promise
+export const mastra = new Proxy({} as any, {
+  get(target, prop) {
+    return mastraPromise.then((instance) => instance[prop as keyof typeof instance]);
+  }
+});
 
 // Start the Mastra server on port 80 (production port)
 const port = 80;
 console.log(`🚀 Mastra server configured for port ${port}`);
-console.log(`🔗 Main endpoint: POST /api/agents/repair-workflow-orchestrator/stream`);
+console.log(`🔗 Main endpoint: POST /api/agents/customer-identification/stream`);
 console.log(`🔗 Health check: GET /health`);
 console.log(`🌐 Server will be accessible on port ${port} (configured in Lightsail firewall)`);

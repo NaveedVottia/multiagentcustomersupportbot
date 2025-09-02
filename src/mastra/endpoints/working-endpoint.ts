@@ -28,7 +28,7 @@ export class WorkingEndpoint {
         console.log("🎯 [WorkingEndpoint] Executing delegateTo");
         try {
           const result = await delegateTo.execute({ 
-            agentId: "routing-agent-customer-identification",
+            agentId: "customer-identification",
             message: "顧客情報の確認をお願いします。",
             context: {}
           });

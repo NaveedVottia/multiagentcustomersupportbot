@@ -2,6 +2,24 @@ import { z } from "zod";
 import { createTool } from "@mastra/core/tools";
 import { zapierMcp } from "../../../integrations/zapier-mcp";
 
+// Import types and functions from orchestrator-tools
+type ToolExecuteArgs = { input?: any; context?: any; writer?: any; mastra?: any };
+
+function getArgs<T = any>(args: any): T {
+  // Accept tool args from multiple shapes: {input}, {context}, or top-level
+  const inputPart = (args && typeof args === "object" ? args.input : undefined) || {};
+  const contextPart = (args && typeof args === "object" ? args.context : undefined) || {};
+  const topLevelPart: Record<string, any> = {};
+  if (args && typeof args === "object") {
+    for (const [key, value] of Object.entries(args)) {
+      if (key === "writer" || key === "mastra" || key === "input" || key === "context") continue;
+      topLevelPart[key] = value;
+    }
+  }
+  const payload = { ...topLevelPart, ...contextPart, ...inputPart };
+  return payload as T;
+}
+
 function mapLookupKey(worksheet: string, key: string): string {
   if (worksheet === "Customers") {
     const map: Record<string,string> = {
@@ -10,6 +28,17 @@ function mapLookupKey(worksheet: string, key: string): string {
       "メールアドレス": "COL$C",
       "電話番号": "COL$D",
       "所在地": "COL$E",
+    };
+    return map[key] || key;
+  }
+  if (worksheet === "Products") {
+    const map: Record<string,string> = {
+      "製品ID": "COL$A",
+      "顧客ID": "COL$B",
+      "製品カテゴリ": "COL$C",
+      "型式": "COL$D",
+      "シリアル番号": "COL$E",
+      "保証状況": "COL$F",
     };
     return map[key] || key;
   }
@@ -24,6 +53,20 @@ function mapLookupKey(worksheet: string, key: string): string {
       "訪問要否": "COL$G",
       "優先度": "COL$H",
       "対応者": "COL$I",
+    };
+    return map[key] || key;
+  }
+  if (worksheet === "Logs") {
+    const map: Record<string,string> = {
+      "Timestamp": "COL$A",
+      "Repair ID": "COL$B",
+      "Status": "COL$C",
+      "Customer ID": "COL$D",
+      "Product ID": "COL$E",
+      "担当者 (Handler)": "COL$F",
+      "Issue": "COL$G",
+      "Source": "COL$H",
+      "Raw": "COL$I",
     };
     return map[key] || key;
   }
@@ -74,10 +117,11 @@ async function mcpLookupRows(worksheet: string, lookup_key: string, lookup_value
     const normalizedValue = String(lookup_value ?? "").replace(/\s+/g, " ").trim();
     console.log(`[MCP] Looking up ${worksheet} with key ${key} and value ${normalizedValue}`);
     const result = await zapierMcp.callTool("google_sheets_lookup_spreadsheet_rows_advanced", {
-      instructions: `lookup ${lookup_key}`,
+      instructions: `Find ${worksheet} rows where ${lookup_key}=${normalizedValue}`,
       worksheet,
       lookup_key: key,
       lookup_value: normalizedValue,
+      row_count: "50"
     });
     const rows = extractRowsFromZapier(result);
     console.log(`[MCP] Lookup normalized rows: ${rows.length}`);
@@ -283,7 +327,16 @@ export const getCustomerHistory = createTool({
   execute: async ({ context, writer }: { context: any; writer?: any }) => {
     const { customerId, sessionId, limit } = context;
     try {
-      const rows = await mcpLookupRows("repairs", "顧客ID", customerId);
+      const result = await zapierMcp.callTool("google_sheets_lookup_spreadsheet_rows_advanced", {
+        instructions: `Get all repairs for customer ID: ${customerId}`,
+        worksheet: "Repairs",
+        lookup_key: "COL$D",
+        lookup_value: customerId,
+        row_count: "50"
+      });
+
+      // Extract rows from the correct format
+      const rows = extractRowsFromZapier(result);
 
       // Normalize and sort (most recent first when possible)
       const items = rows.map((r: any) => ({
@@ -322,6 +375,155 @@ export const getCustomerHistory = createTool({
         message: `Failed to retrieve customer history: ${error instanceof Error ? error.message : 'Error'}`,
         customerId,
         error: error instanceof Error ? error.message : 'Error',
+      };
+    }
+  },
+});
+
+export const identifyCustomerWithFullDetails = createTool({
+  id: "identifyCustomerWithFullDetails",
+  description: "Identify customer using all 3 details (company name, email, phone) with comma-separated format for better matching",
+  inputSchema: z.object({ 
+    companyName: z.string().optional(),
+    email: z.string().optional(), 
+    phone: z.string().optional(),
+    allDetails: z.string().optional() // For when all details are provided in one string
+  }),
+  outputSchema: z.object({ 
+    success: z.boolean(), 
+    customerData: z.record(z.any()).optional(), 
+    found: z.boolean(),
+    message: z.string().optional()
+  }),
+  async execute(args: { input?: any; context?: any; writer?: any; mastra?: any }) {
+    const { companyName, email, phone, allDetails } = getArgs(args) as { 
+      companyName?: string; 
+      email?: string; 
+      phone?: string;
+      allDetails?: string;
+    };
+    
+    console.log(`[Customer ID] Received details - Company: ${companyName}, Email: ${email}, Phone: ${phone}, All: ${allDetails}`);
+    
+    // If allDetails is provided, parse it
+    let finalCompanyName = companyName;
+    let finalEmail = email;
+    let finalPhone = phone;
+    
+    if (allDetails) {
+      const parts = allDetails.split(/\s+/).filter(part => part.trim());
+      if (parts.length >= 3) {
+        finalCompanyName = parts.slice(0, -2).join(" "); // Everything except last 2 parts
+        finalEmail = parts[parts.length - 2];
+        finalPhone = parts[parts.length - 1];
+      }
+    }
+    
+    // Check if we have all required details
+    if (!finalCompanyName || !finalEmail || !finalPhone) {
+      console.log(`[Customer ID] Missing details - Company: ${finalCompanyName}, Email: ${finalEmail}, Phone: ${finalPhone}`);
+      return {
+        success: true,
+        customerData: null,
+        found: false,
+        message: "Please provide company name, email address, and phone number to proceed with customer identification."
+      };
+    }
+    
+    console.log(`[Customer ID] All details present, making Zapier call with: Company: ${finalCompanyName}, Email: ${finalEmail}, Phone: ${finalPhone}`);
+    
+    try {
+      // Normalize the data - allow for spaces and use comma format
+      const normalizedCompany = finalCompanyName.replace(/\s+/g, " ").trim();
+      const normalizedEmail = finalEmail.replace(/\s+/g, "").trim();
+      const normalizedPhone = finalPhone.replace(/\s+/g, "").trim();
+      
+      // Try multiple search strategies with comma-separated format
+      const searchStrategies = [
+        {
+          key: "メールアドレス",
+          value: normalizedEmail,
+          description: "email lookup"
+        },
+        {
+          key: "電話番号", 
+          value: normalizedPhone,
+          description: "phone lookup"
+        },
+        {
+          key: "会社名",
+          value: normalizedCompany,
+          description: "company name lookup"
+        }
+      ];
+      
+      for (const strategy of searchStrategies) {
+        try {
+          console.log(`[Customer ID] Trying ${strategy.description} with ${strategy.key}: ${strategy.value}`);
+          
+          const result = await zapierMcp.callTool("google_sheets_lookup_spreadsheet_rows_advanced", {
+            instructions: `Find customer by ${strategy.description}`,
+            worksheet: "Customers",
+            lookup_key: strategy.key,
+            lookup_value: strategy.value,
+            row_count: "50"
+          });
+          
+          if (result && Array.isArray(result) && result.length > 0) {
+            // Find the best match that includes all our details
+            const bestMatch = result.find((row: any) => {
+              const rowCompany = (row["会社名"] || "").toLowerCase();
+              const rowEmail = (row["メールアドレス"] || "").toLowerCase();
+              const rowPhone = (row["電話番号"] || "").replace(/\D/g, "");
+              
+              const inputCompany = normalizedCompany.toLowerCase();
+              const inputEmail = normalizedEmail.toLowerCase();
+              const inputPhone = normalizedPhone.replace(/\D/g, "");
+              
+              // Check if this row matches our input details
+              return (rowCompany.includes(inputCompany) || inputCompany.includes(rowCompany)) &&
+                     (rowEmail === inputEmail) &&
+                     (rowPhone === inputPhone);
+            }) || result[0];
+            
+            const customerData = {
+              customerId: bestMatch["顧客ID"],
+              storeName: bestMatch["会社名"],
+              email: bestMatch["メールアドレス"],
+              phone: bestMatch["電話番号"],
+              location: bestMatch["所在地"],
+              found: true
+            };
+            
+            console.log(`[Customer ID] Customer found: ${customerData.storeName} (${customerData.customerId})`);
+            
+            return {
+              success: true,
+              customerData,
+              found: true,
+              message: `Customer identified: ${customerData.storeName}`
+            };
+          }
+        } catch (error) {
+          console.error(`[Customer ID] ${strategy.description} failed:`, error);
+        }
+      }
+      
+      console.log(`[Customer ID] No customer found for: ${normalizedCompany}, ${normalizedEmail}, ${normalizedPhone}`);
+      return {
+        success: true,
+        customerData: null,
+        found: false,
+        message: "Customer not found in our database. Please check the information provided."
+      };
+      
+    } catch (error) {
+      console.error("[Customer ID] Failed to identify customer:", error);
+      return {
+        success: false,
+        customerData: null,
+        found: false,
+        message: "Error occurred during customer identification. Please try again."
       };
     }
   },
@@ -792,4 +994,5 @@ export const customerTools = {
   updateCustomer,
   deleteCustomer,
   getCustomerHistory,
+  identifyCustomerWithFullDetails,
 };

@@ -26,12 +26,13 @@ if (process.env.LANGFUSE_HOST && process.env.LANGFUSE_PUBLIC_KEY && process.env.
     
     console.log("✅ Langfuse client created successfully");
     
-    // Try to fetch a prompt
+    // Try to fetch a prompt using the same method as the agent
     try {
-      const prompt = await langfuse.getPrompt("repair-workflow-orchestrator");
-      console.log("✅ Prompt fetched successfully:", prompt ? "Has data" : "No data");
-      if (prompt) {
-        console.log("Prompt content length:", prompt.prompt?.length || 0);
+      const promptClient = await langfuse.getPrompt("orchestrator", undefined, { cacheTtlSeconds: 1 });
+      console.log("✅ Prompt fetched successfully:", promptClient ? "Has data" : "No data");
+      if (promptClient) {
+        console.log("Prompt content length:", promptClient.prompt?.length || 0);
+        console.log("Prompt version:", promptClient.version);
       }
     } catch (promptError) {
       console.error("❌ Error fetching prompt:", promptError.message);

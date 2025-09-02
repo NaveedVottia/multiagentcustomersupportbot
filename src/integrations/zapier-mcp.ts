@@ -41,7 +41,7 @@ export class ZapierMcpClient {
         servers: {
           Zapier: { url: new URL(url) },
         },
-        timeout: 20000,
+        timeout: 120000, // Increased timeout to 120 seconds for Zapier calls
       });
       const toolsets = await this.mcp.getToolsets();
       this.toolset = toolsets["Zapier"] || {};
@@ -52,6 +52,7 @@ export class ZapierMcpClient {
   async callTool(toolName: string, params: ToolCallParams): Promise<any> {
     await this.ensureConnected();
     if (!this.toolset) throw new Error("Zapier MCP toolset unavailable");
+    
     const tool = this.toolset[toolName];
     if (!tool || typeof tool.execute !== "function") {
       throw new Error(`Zapier MCP tool not found: ${toolName}`);
