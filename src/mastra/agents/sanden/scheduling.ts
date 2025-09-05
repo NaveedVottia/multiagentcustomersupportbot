@@ -5,9 +5,8 @@ import { schedulingTools } from "../../tools/sanden/scheduling-tools";
 import { customerTools } from "../../tools/sanden/customer-tools";
 import { commonTools } from "../../tools/sanden/common-tools";
 import { memoryTools } from "../../tools/sanden/memory-tools";
-import { loadLangfusePrompt } from "../../prompts/langfuse";
 import { langfuse } from "../../../integrations/langfuse";
-import { sharedMemory } from "./customer-identification";
+import { sharedMastraMemory } from "../../shared-memory";
 
 export const repairVisitConfirmationAgent = new Agent({
   name: "repair-scheduling",
@@ -23,17 +22,19 @@ export const repairVisitConfirmationAgent = new Agent({
     ...commonTools,
     ...memoryTools, // Add memory tools
   },
-  memory: sharedMemory, // Use shared memory
+  memory: sharedMastraMemory, // Use shared Mastra memory
 });
 
 // Bind prompt from Langfuse
 (async () => {
   try {
-    const instructions = await loadLangfusePrompt("repair-scheduling", { label: "production" });
+    const instructions = await langfuse.getPromptText("repair-scheduling", "production");
     if (instructions) {
       // Use the correct method to update instructions
       (repairVisitConfirmationAgent as any).__updateInstructions(instructions);
-      console.log(`[Langfuse] ✅ Loaded prompt via SDK: repair-scheduling`);
+      console.log(`[Langfuse] ✅ Loaded prompt: repair-scheduling (${instructions.length} chars)`);
+    } else {
+      console.log("[Langfuse] Empty prompt received for repair-scheduling");
     }
   } catch (error) {
     console.error("[Langfuse] Failed to load repair-scheduling prompt:", error);

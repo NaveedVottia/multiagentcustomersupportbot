@@ -1,7 +1,8 @@
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import { zapierMcp } from "../../../integrations/zapier-mcp";
-import { sharedMemory } from "../../agents/sanden/customer-identification";
+import { sharedMemory, getSharedMemoryForAgent } from "../../agents/sanden/customer-identification";
+import { sharedMastraMemory, getCustomerData, getSessionCustomerId } from "../../shared-memory";
 
 export const createRepairTool = createTool({
   id: "createRepair",
@@ -120,7 +121,7 @@ export const getRepairStatusTool = createTool({
         row_count: 50,
       });
       const list = (rows?.results as any[]) || [];
-      const found = list.find((r: any) => r?.["COL$A"] === repairId || r?.修理ID === repairId);
+      const found = list.find((r: any) => r?.修理ID === repairId || r?.["COL$A"] === repairId);
       return {
         success: true,
         data: found || null,
@@ -151,20 +152,41 @@ export const hybridGetRepairsByCustomerIdTool = createTool({
   execute: async ({ context }: { context: any }) => {
     let { customerId, sessionId = "default-session" } = context;
 
+    console.log(`🔍 [DEBUG] Repair history tool called with context:`, JSON.stringify(context, null, 2));
+
     // Try to get customer ID from session data first
     if (!customerId && context.session && context.session.customerId) {
       customerId = context.session.customerId;
       console.log(`🔍 [DEBUG] Retrieved customer ID from session: ${customerId}`);
     }
 
-    // If still no customerId, try to get it from shared memory
+    // If still no customerId, try to get it from shared Mastra session memory
+    if (!customerId) {
+      try {
+        const idFromSession = getSessionCustomerId(sessionId);
+        if (idFromSession) {
+          customerId = idFromSession;
+          console.log(`🔍 [DEBUG] Retrieved customer ID from Mastra session memory: ${customerId}`);
+        }
+      } catch (error) {
+        console.log(`❌ [DEBUG] Error getting customer ID from Mastra session memory:`, error);
+      }
+    }
+
+    // Fallback to original shared memory
     if (!customerId) {
       try {
         customerId = sharedMemory.get("customerId");
-        console.log(`🔍 [DEBUG] Retrieved customer ID from memory: ${customerId}`);
+        console.log(`🔍 [DEBUG] Retrieved customer ID from fallback shared memory: ${customerId}`);
       } catch (error) {
-        console.log(`❌ [DEBUG] Error getting customer ID from memory:`, error);
+        console.log(`❌ [DEBUG] Error getting customer ID from fallback shared memory:`, error);
       }
+    }
+
+    // Additional fallback: check if customerId is passed directly in the context
+    if (!customerId && context.customerId) {
+      customerId = context.customerId;
+      console.log(`🔍 [DEBUG] Retrieved customer ID from direct context: ${customerId}`);
     }
 
     if (!customerId) {
@@ -179,13 +201,22 @@ export const hybridGetRepairsByCustomerIdTool = createTool({
     try {
       console.log(`🔍 [DEBUG] Getting repair history for customer ID: ${customerId}`);
       
-      const result = await zapierMcp.callTool("google_sheets_lookup_spreadsheet_rows_advanced", {
+      // Add timeout wrapper for Zapier call
+      const zapierCall = zapierMcp.callTool("google_sheets_lookup_spreadsheet_rows_advanced", {
         instructions: `Get repair history for customer ID: ${customerId}`,
         worksheet: "Repairs",
         lookup_key: "顧客ID",
         lookup_value: customerId,
         row_count: "50"
       });
+      
+      // Wait up to 40 seconds for Zapier response
+      const result = await Promise.race([
+        zapierCall,
+        new Promise((_, reject) => 
+          setTimeout(() => reject(new Error("Zapier call timeout after 40 seconds")), 40000)
+        )
+      ]);
       
       console.log(`🔍 [DEBUG] Zapier result for repair history:`, JSON.stringify(result, null, 2));
       
@@ -228,15 +259,15 @@ export const hybridGetRepairsByCustomerIdTool = createTool({
         
         // Format the repair history data
         const repairHistory = rows.map((row: any) => ({
-          repairId: row["COL$A"] || row["修理ID"],
-          date: row["COL$B"] || row["日時"],
-          productId: row["COL$C"] || row["製品ID"],
-          customerId: row["COL$D"] || row["顧客ID"],
-          issue: row["COL$E"] || row["問題内容"],
-          status: row["COL$F"] || row["ステータス"],
-          visitRequired: row["COL$G"] || row["訪問要否"],
-          priority: row["COL$H"] || row["優先度"],
-          handler: row["COL$I"] || row["対応者"]
+          repairId: row["修理ID"] || row["COL$A"],
+          date: row["日時"] || row["COL$B"],
+          productId: row["製品ID"] || row["COL$C"],
+          customerId: row["顧客ID"] || row["COL$D"],
+          issue: row["問題内容"] || row["COL$E"],
+          status: row["ステータス"] || row["COL$F"],
+          visitRequired: row["訪問要否"] || row["COL$G"],
+          priority: row["優先度"] || row["COL$H"],
+          handler: row["対応者"] || row["COL$I"],
         }));
         
         console.log(`✅ [DEBUG] Formatted repair history:`, JSON.stringify(repairHistory, null, 2));

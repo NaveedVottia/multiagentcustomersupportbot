@@ -121,7 +121,7 @@ export const delegateTo = createTool({
         }
       }
       
-      await langfuse.logToolExecution(traceId, "delegateTo", { agentId, messageLength: message?.length || 0 }, { ok: true, agentId, extractedData }, { extractedKeys: extractedData ? Object.keys(extractedData) : [] });
+      await langfuse.logToolExecution(traceId, "delegateTo", { agentId, messageLength: message?.length || 0 }, { ok: true, agentId, extractedData });
       await langfuse.endTrace(traceId, { success: true });
       return { ok: true, agentId, extractedData };
     } catch (error) {
@@ -242,107 +242,50 @@ export const lookupCustomerFromDatabase = createTool({
     const traceId = await langfuse.startTrace("tool.lookupCustomerFromDatabase");
     
     try {
-      // Map search type to database column
+      // Map search type to exact database headers
       const lookupColumn = searchType === "store_name" ? "会社名" : 
-                          searchType === "customer_id" ? "顧客ID" :
-                          searchType === "phone" ? "電話番号" : "メールアドレス";
+                           searchType === "customer_id" ? "顧客ID" :
+                           searchType === "phone" ? "電話番号" : "メールアドレス";
       
-      // Create smart search queries for store name matching
-      let searchQueries = [storeName];
-      if (searchType === "store_name") {
-        // Add common variations and translations
-        if (storeName.toLowerCase().includes("welcia")) {
-          searchQueries.push("ウエルシア");
-          searchQueries.push("ウエルシア 川崎駅前店");
-        }
-        if (storeName.toLowerCase().includes("kawasaki")) {
-          searchQueries.push("川崎");
-        }
-        if (storeName.toLowerCase().includes("station")) {
-          searchQueries.push("駅前");
-        }
+      const result = await Promise.race([
+        zapierMcp.callTool("google_sheets_lookup_spreadsheet_rows_advanced", {
+          instructions: `Look up customer data by ${lookupColumn}: ${storeName}`,
+          worksheet: "Customers",
+          lookup_key: lookupColumn,
+          lookup_value: storeName,
+          row_count: "5"
+        }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("Zapier call timeout after 40 seconds")), 40000))
+      ]);
+      
+      let rows: any[] = [];
+      if (result && result.results && Array.isArray(result.results)) {
+        rows = result.results[0]?.rows || [];
+      } else if (Array.isArray(result)) {
+        rows = result as any[];
+      } else if (result && (result as any).rows) {
+        rows = (result as any).rows;
+      } else if (result && (result as any)["0"] && (result as any)["0"].rows) {
+        rows = (result as any)["0"].rows;
       }
       
-      // Try each search query
-      for (const query of searchQueries) {
-        try {
-          console.log(`🔍 [DEBUG] Searching with query: "${query}"`);
-          const result = await zapierMcp.callTool("google_sheets_lookup_spreadsheet_rows_advanced", {
-            instructions: `Look up customer data by ${searchType} with query: ${query}`,
-            worksheet: "Customers",
-            lookup_key: lookupColumn,
-            lookup_value: query,
-            row_count: "5"
-          });
-          
-          console.log(`🔍 [DEBUG] Zapier result:`, JSON.stringify(result, null, 2));
-          
-          // Handle different possible result structures
-          let rows = [];
-          
-          // First, try to extract from content[0].text if it's a JSON string
-          if (result && result.content && Array.isArray(result.content) && result.content[0] && result.content[0].text) {
-            try {
-              console.log(`🔍 [DEBUG] Found content[0].text, parsing JSON...`);
-              const parsedContent = JSON.parse(result.content[0].text);
-              console.log(`🔍 [DEBUG] Parsed content:`, JSON.stringify(parsedContent, null, 2));
-              
-              if (parsedContent && parsedContent.results && Array.isArray(parsedContent.results) && parsedContent.results[0] && parsedContent.results[0].rows) {
-                rows = parsedContent.results[0].rows;
-                console.log(`🔍 [DEBUG] Extracted rows from parsed content:`, JSON.stringify(rows, null, 2));
-              }
-            } catch (parseError) {
-              console.log(`❌ [DEBUG] Failed to parse content[0].text as JSON:`, parseError);
-            }
-          }
-          
-          // Fallback to original logic if content parsing didn't work
-          if (rows.length === 0) {
-            if (result && result["0"] && result["0"].rows) {
-              rows = result["0"].rows;
-            } else if (result && Array.isArray(result)) {
-              rows = result;
-            } else if (result && result.rows) {
-              rows = result.rows;
-            } else if (result && result.results && result.results[0] && result.results[0].rows) {
-              rows = result.results[0].rows;
-            }
-          }
-          
-          console.log(`🔍 [DEBUG] Final extracted rows:`, JSON.stringify(rows, null, 2));
-          
-          if (rows && rows.length > 0) {
-            console.log(`✅ [DEBUG] Found ${rows.length} rows`);
-            // Find the best match - for ドン・キホーテ, just take the first match
-            const bestMatch = rows[0];
-            
-            console.log(`🔍 [DEBUG] Best match:`, JSON.stringify(bestMatch, null, 2));
-            
-            const customerData = {
-              customerId: bestMatch["COL$A"] || bestMatch["顧客ID"] || bestMatch["id"],
-              storeName: bestMatch["COL$B"] || bestMatch["会社名"] || bestMatch["storeName"],
-              email: bestMatch["COL$C"] || bestMatch["メールアドレス"] || bestMatch["email"],
-              phone: bestMatch["COL$D"] || bestMatch["電話番号"] || bestMatch["phone"],
-              location: bestMatch["COL$E"] || bestMatch["所在地"] || bestMatch["location"],
-              found: true
-            };
-            
-            console.log(`✅ [DEBUG] Customer data:`, JSON.stringify(customerData, null, 2));
-            
-            const res = { success: true, customerData, found: true };
-            await langfuse.logToolExecution(traceId, "lookupCustomerFromDatabase", { storeName, searchType, matchedQuery: query }, res);
-            await langfuse.endTrace(traceId, { success: true });
-            return res;
-          } else {
-            console.log(`❌ [DEBUG] No rows found in result:`, JSON.stringify(result, null, 2));
-          }
-        } catch (error) {
-          console.error(`Failed to search with query "${query}":`, error);
-        }
+      if (rows.length > 0) {
+        const best = rows[0];
+        const customerData = {
+          customerId: best["顧客ID"] || best["COL$A"] || best["id"],
+          storeName: best["会社名"] || best["COL$B"] || best["storeName"],
+          email: best["メールアドレス"] || best["COL$C"] || best["email"],
+          phone: best["電話番号"] || best["COL$D"] || best["phone"],
+          location: best["所在地"] || best["COL$E"] || best["location"],
+        };
+        const res = { success: true, customerData, found: !!customerData.customerId };
+        await langfuse.logToolExecution(traceId, "lookupCustomerFromDatabase", { storeName, searchType, lookupColumn }, res);
+        await langfuse.endTrace(traceId, { success: true });
+        return res;
       }
-      
+
       const res = { success: true, customerData: null, found: false };
-      await langfuse.logToolExecution(traceId, "lookupCustomerFromDatabase", { storeName, searchType, triedQueries: searchQueries }, res);
+      await langfuse.logToolExecution(traceId, "lookupCustomerFromDatabase", { storeName, searchType, lookupColumn }, res);
       await langfuse.endTrace(traceId, { success: true });
       return res;
     } catch (error) {
@@ -365,15 +308,14 @@ export const logCustomerData = createTool({
     const traceId = await langfuse.startTrace("tool.logCustomerData");
     
     try {
-      // Log to Google Sheets via Zapier MCP using correct database schema
       await zapierMcp.callTool("google_sheets_create_spreadsheet_row", {
         instructions: "Log customer data extraction to Customers worksheet",
         worksheet: "Customers",
         "顧客ID": customerData.customerId || `CUST-${Date.now()}`,
         "会社名": customerData.storeName || customerData.name || customerData.companyName || "",
         "メールアドレス": customerData.email || customerData.emailAddress || "",
-        "電話番号": customerData.phoneNumber || customerData.phone || customerData.telephone || "",
-        "所在地": customerData.address || customerData.location || customerData.area || "",
+        "電話番号": customerData.phone || customerData.telephone || "",
+        "所在地": customerData.address || customerData.location || "",
         "Source": source || "customer-identification",
         "Raw Data": JSON.stringify(customerData),
         "Status": "Identified",

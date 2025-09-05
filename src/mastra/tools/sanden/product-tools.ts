@@ -1,7 +1,8 @@
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import { zapierMcp } from "../../../integrations/zapier-mcp";
-import { sharedMemory } from "../../agents/sanden/customer-identification";
+import { getSessionMemory, sharedMemory, getSharedMemoryForAgent } from "../../agents/sanden/customer-identification";
+import { sharedMastraMemory, getCustomerData, getSessionCustomerId } from "../../shared-memory";
 
 export const searchProductsTool = createTool({
   id: "searchProducts",
@@ -55,7 +56,7 @@ export const getProductsByCustomerIdTool = createTool({
       const result = await zapierMcp.callTool("google_sheets_lookup_spreadsheet_rows_advanced", {
         instructions: `Get all products for customer ID: ${customerId}`,
         worksheet: "Products",
-        lookup_key: "COL$B",
+        lookup_key: "顧客ID",
         lookup_value: customerId,
         row_count: "50"
       });
@@ -91,15 +92,28 @@ export const hybridGetProductsByCustomerIdTool = createTool({
     message: z.string(),
   }),
   execute: async ({ context }: { context: any }) => {
-    let { customerId, sessionId = "default-session" } = context;
+    let { customerId, sessionId: currentSessionId = "default-session" } = context;
 
-    // If customerId is not provided, try to get it from shared memory
+    // If customerId is not provided, try to get it from shared Mastra memory using session-scoped key
+    if (!customerId) {
+      try {
+        const idFromSession = getSessionCustomerId(currentSessionId);
+        if (idFromSession) {
+          customerId = idFromSession;
+          console.log(`🔍 [DEBUG] Retrieved customer ID from Mastra session memory: ${customerId}`);
+        }
+      } catch (error) {
+        console.log(`❌ [DEBUG] Error getting customer ID from Mastra session memory:`, error);
+      }
+    }
+
+    // Fallback to original shared memory
     if (!customerId) {
       try {
         customerId = sharedMemory.get("customerId");
-        console.log(`🔍 [DEBUG] Retrieved customer ID from memory: ${customerId}`);
+        console.log(`🔍 [DEBUG] Retrieved customer ID from fallback shared memory: ${customerId}`);
       } catch (error) {
-        console.log(`❌ [DEBUG] Error getting customer ID from memory:`, error);
+        console.log(`❌ [DEBUG] Error getting customer ID from fallback shared memory:`, error);
       }
     }
 
@@ -115,13 +129,22 @@ export const hybridGetProductsByCustomerIdTool = createTool({
     try {
       console.log(`🔍 [DEBUG] Getting products for customer ID: ${customerId}`);
       
-      const result = await zapierMcp.callTool("google_sheets_lookup_spreadsheet_rows_advanced", {
+      // Add timeout wrapper for Zapier call
+      const zapierCall = zapierMcp.callTool("google_sheets_lookup_spreadsheet_rows_advanced", {
         instructions: `Get all products for customer ID: ${customerId}`,
         worksheet: "Products",
         lookup_key: "顧客ID",
         lookup_value: customerId,
         row_count: "50"
       });
+      
+      // Wait up to 40 seconds for Zapier response
+      const result = await Promise.race([
+        zapierCall,
+        new Promise((_, reject) => 
+          setTimeout(() => reject(new Error("Zapier call timeout after 40 seconds")), 40000)
+        )
+      ]);
       
       console.log(`🔍 [DEBUG] Zapier result for products:`, JSON.stringify(result, null, 2));
       
@@ -164,12 +187,12 @@ export const hybridGetProductsByCustomerIdTool = createTool({
         
         // Format the product data
         const products = rows.map((row: any) => ({
-          productId: row["COL$A"] || row["製品ID"],
-          customerId: row["COL$B"] || row["顧客ID"],
-          productCategory: row["COL$C"] || row["製品カテゴリ"],
-          model: row["COL$D"] || row["型式"],
-          serialNumber: row["COL$E"] || row["シリアル番号"],
-          warrantyStatus: row["COL$F"] || row["保証状況"]
+          productId: row["製品ID"] || row["COL$A"],
+          customerId: row["顧客ID"] || row["COL$B"],
+          productCategory: row["製品カテゴリ"] || row["COL$C"],
+          model: row["型式"] || row["COL$D"],
+          serialNumber: row["シリアル番号"] || row["COL$E"],
+          warrantyStatus: row["保証状況"] || row["COL$F"]
         }));
         
         console.log(`✅ [DEBUG] Formatted products:`, JSON.stringify(products, null, 2));

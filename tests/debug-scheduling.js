@@ -7,7 +7,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 dotenv.config({ path: path.resolve(__dirname, "server.env") });
 
-console.log("🔍 Testing Agent Instructions...");
+console.log("🔍 Testing Scheduling Agent...");
 
 try {
   // Import the mastra instance
@@ -20,15 +20,15 @@ try {
   
   console.log("🔍 Available agents:", Object.keys(mastra.agents || {}));
   
-  // Get the orchestrator agent
-  const agent = mastra.getAgentById("orchestrator");
+  // Get the scheduling agent
+  const agent = mastra.getAgentById("repair-scheduling");
   
   if (!agent) {
-    console.log("❌ Orchestrator agent not found");
+    console.log("❌ Scheduling agent not found");
     process.exit(1);
   }
   
-  console.log("✅ Orchestrator agent found");
+  console.log("✅ Scheduling agent found");
   console.log("🔍 Agent name:", agent.name);
   console.log("🔍 Agent description:", agent.description);
   console.log("🔍 Agent instructions length:", agent.instructions?.length || 0);
@@ -37,7 +37,7 @@ try {
   // Test if the agent can stream
   console.log("🔍 Testing agent streaming...");
   const stream = await agent.stream([
-    { role: "user", content: "こんにちは" }
+    { role: "user", content: "修理予約をお願いします" }
   ]);
   
   console.log("✅ Stream created");

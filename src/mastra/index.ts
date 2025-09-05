@@ -20,6 +20,7 @@ import { routingAgentCustomerIdentification } from "./agents/sanden/customer-ide
 import { repairAgentProductSelection } from "./agents/sanden/product-selection";
 import { repairQaAgentIssueAnalysis } from "./agents/sanden/issue-analysis";
 import { repairVisitConfirmationAgent } from "./agents/sanden/visit-confirmation";
+import { setMastraInstance } from "./tools/sanden/orchestrator-tools";
 
 // Create agents asynchronously
 async function createMastraInstance() {
@@ -48,6 +49,9 @@ async function createMastraInstance() {
   console.log("✅ Mastra instance created with 4 agents");
   console.log("✅ Main endpoint: POST /api/agents/customer-identification/stream");
   console.log("✅ Customer identification agent ready");
+
+  // Set the mastra instance for orchestrator tools
+  setMastraInstance(mastra);
 
   // Debug: Check what agents are actually available
   console.log("🔍 Debug: Available agents in Mastra instance:");

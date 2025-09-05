@@ -4,26 +4,53 @@ import { repairTools } from "../../tools/sanden/repair-tools";
 import { customerTools } from "../../tools/sanden/customer-tools";
 import { commonTools } from "../../tools/sanden/common-tools";
 import { memoryTools } from "../../tools/sanden/memory-tools";
-import { Langfuse } from "langfuse";
+import { langfuse } from "../../../integrations/langfuse";
+import { sharedMastraMemory } from "../../shared-memory";
 import dotenv from "dotenv";
-import { sharedMemory } from "./customer-identification";
 
 dotenv.config({ path: "./server.env" });
 
-let REPAIR_HISTORY_INSTRUCTIONS = "";
-try {
-  const langfuse = new Langfuse({
-    publicKey: process.env.LANGFUSE_PUBLIC_KEY,
-    secretKey: process.env.LANGFUSE_SECRET_KEY,
-    baseUrl: process.env.LANGFUSE_HOST,
-  });
-  const promptClient = await langfuse.getPrompt("repair-history-ticket", undefined, { cacheTtlSeconds: 1 });
-  REPAIR_HISTORY_INSTRUCTIONS = promptClient?.prompt?.trim() || "";
-  console.log(`[Langfuse] ✅ Loaded repair-history-ticket prompt via SDK (v${promptClient.version})`);
-} catch (error) {
-  console.error("[Langfuse] Failed to load repair-history-ticket prompt:", error);
-  REPAIR_HISTORY_INSTRUCTIONS = "";
+let REPAIR_HISTORY_INSTRUCTIONS = "Repair history agent. Instructions will be loaded from Langfuse.";
+
+// Load Langfuse prompt asynchronously with retry logic
+async function loadRepairHistoryPrompt() {
+  let retries = 3;
+  while (retries > 0) {
+    try {
+      // Wait a bit for environment to be fully loaded
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      console.log(`[Langfuse] Attempting to load repair-history-ticket prompt (attempt ${4 - retries})...`);
+      const promptText = await langfuse.getPromptText("repair-history-ticket", "production");
+      console.log(`[Langfuse] Raw instructions length: ${promptText?.length || 0}`);
+      
+      if (promptText && promptText.trim() && promptText.length > 0) {
+        REPAIR_HISTORY_INSTRUCTIONS = promptText.trim();
+        console.log(`[Langfuse] ✅ Loaded repair-history-ticket prompt (${promptText.length} chars)`);
+        
+        // Update the agent's instructions
+        (repairQaAgentIssueAnalysis as any).__updateInstructions(promptText.trim());
+        console.log(`[Langfuse] ✅ Updated repair-history-ticket agent instructions`);
+        break;
+      } else {
+        console.log(`[Langfuse] Empty prompt received for repair-history-ticket, retries left: ${retries - 1}`);
+        retries--;
+        if (retries > 0) {
+          await new Promise(resolve => setTimeout(resolve, 2000));
+        }
+      }
+    } catch (error) {
+      console.error(`[Langfuse] Failed to load repair-history-ticket prompt (retries left: ${retries - 1}):`, error);
+      retries--;
+      if (retries > 0) {
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      }
+    }
+  }
 }
+
+// Load the prompt asynchronously
+loadRepairHistoryPrompt();
 
 export const repairQaAgentIssueAnalysis = new Agent({
   name: "repair-history-ticket",
@@ -36,5 +63,5 @@ export const repairQaAgentIssueAnalysis = new Agent({
     ...commonTools,
     ...memoryTools,
   },
-  memory: sharedMemory,
+  memory: sharedMastraMemory,
 });

@@ -1,6 +1,7 @@
 import { MCPClient } from "@mastra/mcp";
 import { readFileSync } from "fs";
 import { resolve } from "path";
+import { langfuse } from "./langfuse";
 
 type ToolCallParams = Record<string, any>;
 
@@ -39,9 +40,15 @@ export class ZapierMcpClient {
     this.connecting = (async () => {
       this.mcp = new MCPClient({
         servers: {
-          Zapier: { url: new URL(url) },
+          Zapier: { 
+            url: new URL(url),
+            headers: {
+              'Accept': 'application/json, text/event-stream',
+              'Content-Type': 'application/json'
+            }
+          },
         },
-        timeout: 120000, // Increased timeout to 120 seconds for Zapier calls
+        timeout: 60000, // 60 seconds for Zapier calls
       });
       const toolsets = await this.mcp.getToolsets();
       this.toolset = toolsets["Zapier"] || {};
@@ -50,15 +57,64 @@ export class ZapierMcpClient {
   }
 
   async callTool(toolName: string, params: ToolCallParams): Promise<any> {
-    await this.ensureConnected();
-    if (!this.toolset) throw new Error("Zapier MCP toolset unavailable");
+    const startTime = Date.now();
+    let traceId: string | null = null;
     
-    const tool = this.toolset[toolName];
-    if (!tool || typeof tool.execute !== "function") {
-      throw new Error(`Zapier MCP tool not found: ${toolName}`);
+    try {
+      await this.ensureConnected();
+      if (!this.toolset) throw new Error("Zapier MCP toolset unavailable");
+      
+      const tool = this.toolset[toolName];
+      if (!tool || typeof tool.execute !== "function") {
+        throw new Error(`Zapier MCP tool not found: ${toolName}`);
+      }
+      
+      console.log(`[Zapier] Calling tool: ${toolName} with params:`, JSON.stringify(params, null, 2));
+      
+      // Execute the tool
+      const res = await tool.execute({ context: params });
+      
+      const duration = Date.now() - startTime;
+      
+      // Log tool execution to Langfuse with detailed format
+      await langfuse.logToolExecution(
+        traceId,
+        `zapier:${toolName}`,
+        params,
+        res,
+        {
+          duration: duration,
+          toolType: "zapier_mcp",
+          executionTime: new Date().toISOString(),
+          success: true
+        }
+      );
+      
+      console.log(`[Zapier] Tool ${toolName} completed in ${duration}ms`);
+      return res;
+      
+    } catch (error) {
+      const duration = Date.now() - startTime;
+      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      
+      // Log failed tool execution
+      await langfuse.logToolExecution(
+        traceId,
+        `zapier:${toolName}`,
+        params,
+        { error: errorMessage },
+        {
+          duration: duration,
+          toolType: "zapier_mcp",
+          executionTime: new Date().toISOString(),
+          success: false,
+          error: errorMessage
+        }
+      );
+      
+      console.error(`[Zapier] Tool ${toolName} failed after ${duration}ms:`, errorMessage);
+      throw error;
     }
-    const res = await tool.execute({ context: params });
-    return res;
   }
 }
 
