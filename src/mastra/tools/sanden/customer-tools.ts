@@ -123,6 +123,7 @@ async function mcpLookupRows(worksheet: string, lookup_key: string, lookup_value
       lookup_value: normalizedValue,
       row_count: "50"
     });
+    console.log(`[MCP] Raw Zapier result:`, JSON.stringify(result, null, 2));
     const rows = extractRowsFromZapier(result);
     console.log(`[MCP] Lookup normalized rows: ${rows.length}`);
     return rows;
@@ -438,6 +439,9 @@ export const identifyCustomerWithFullDetails = createTool({
       const normalizedEmail = finalEmail.replace(/\s+/g, "").trim();
       const normalizedPhone = finalPhone.replace(/\s+/g, "").trim();
       
+      // TEMPORARY: Skip Zapier calls for testing - Remove this when Zapier is working
+      console.log(`[Customer ID] Making Zapier call for customer lookup`);
+      
       // Try multiple search strategies with comma-separated format
       const searchStrategies = [
         {
@@ -457,6 +461,7 @@ export const identifyCustomerWithFullDetails = createTool({
         }
       ];
       
+      // Try Zapier calls for customer lookup
       for (const strategy of searchStrategies) {
         try {
           console.log(`[Customer ID] Trying ${strategy.description} with ${strategy.key}: ${strategy.value}`);
@@ -469,45 +474,62 @@ export const identifyCustomerWithFullDetails = createTool({
             row_count: "50"
           });
           
-          if (result && Array.isArray(result) && result.length > 0) {
-            // Find the best match that includes all our details
-            const bestMatch = result.find((row: any) => {
-              const rowCompany = (row["会社名"] || "").toLowerCase();
-              const rowEmail = (row["メールアドレス"] || "").toLowerCase();
-              const rowPhone = (row["電話番号"] || "").replace(/\D/g, "");
-              
-              const inputCompany = normalizedCompany.toLowerCase();
-              const inputEmail = normalizedEmail.toLowerCase();
-              const inputPhone = normalizedPhone.replace(/\D/g, "");
-              
-              // Check if this row matches our input details
-              return (rowCompany.includes(inputCompany) || inputCompany.includes(rowCompany)) &&
-                     (rowEmail === inputEmail) &&
-                     (rowPhone === inputPhone);
-            }) || result[0];
-            
-            const customerData = {
-              customerId: bestMatch["顧客ID"],
-              storeName: bestMatch["会社名"],
-              email: bestMatch["メールアドレス"],
-              phone: bestMatch["電話番号"],
-              location: bestMatch["所在地"],
-              found: true
-            };
-            
-            console.log(`[Customer ID] Customer found: ${customerData.storeName} (${customerData.customerId})`);
-            
-            return {
-              success: true,
-              customerData,
-              found: true,
-              message: `Customer identified: ${customerData.storeName}`
-            };
+          // Handle Zapier MCP response format
+          if (result && result.content && Array.isArray(result.content) && result.content[0] && result.content[0].text) {
+            try {
+              const parsedResult = JSON.parse(result.content[0].text);
+              console.log(`[Customer ID] Parsed Zapier result:`, JSON.stringify(parsedResult, null, 2));
+
+              if (parsedResult && parsedResult.results && Array.isArray(parsedResult.results) && parsedResult.results[0] && parsedResult.results[0].rows && parsedResult.results[0].rows.length > 0) {
+                const rows = parsedResult.results[0].rows;
+                console.log(`[Customer ID] Found ${rows.length} customer rows`);
+
+                // Find the best match
+                const bestMatch = rows.find((row: any) => {
+                  const rowCompany = (row["COL$B"] || "").toLowerCase();
+                  const rowEmail = (row["COL$C"] || "").toLowerCase();
+                  const rowPhone = (row["COL$D"] || "").replace(/\D/g, "");
+
+                  const inputCompany = normalizedCompany.toLowerCase();
+                  const inputEmail = normalizedEmail.toLowerCase();
+                  const inputPhone = normalizedPhone.replace(/\D/g, "");
+
+                  console.log(`[Customer ID] Comparing: ${rowCompany} vs ${inputCompany}, ${rowEmail} vs ${inputEmail}, ${rowPhone} vs ${inputPhone}`);
+
+                  return (rowCompany.includes(inputCompany) || inputCompany.includes(rowCompany)) &&
+                         (rowEmail === inputEmail) &&
+                         (rowPhone === inputPhone);
+                });
+
+                if (bestMatch) {
+                  const customerData = {
+                    customerId: bestMatch["COL$A"],
+                    storeName: bestMatch["COL$B"],
+                    email: bestMatch["COL$C"],
+                    phone: bestMatch["COL$D"],
+                    location: bestMatch["COL$E"],
+                    found: true
+                  };
+
+                  console.log(`[Customer ID] Customer found: ${customerData.storeName} (${customerData.customerId})`);
+
+                  return {
+                    success: true,
+                    customerData,
+                    found: true,
+                    message: `Customer identified: ${customerData.storeName}`
+                  };
+                }
+              }
+            } catch (parseError) {
+              console.error(`[Customer ID] Failed to parse Zapier response:`, parseError);
+            }
           }
         } catch (error) {
           console.error(`[Customer ID] ${strategy.description} failed:`, error);
         }
       }
+      
       
       console.log(`[Customer ID] No customer found for: ${normalizedCompany}, ${normalizedEmail}, ${normalizedPhone}`);
       return {

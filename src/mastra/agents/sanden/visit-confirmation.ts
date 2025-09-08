@@ -32,7 +32,7 @@ export const repairVisitConfirmationAgent = new Agent({
 (async () => {
   try {
     const prompt = await loadLangfusePrompt("repair-scheduling", { label: "production" });
-    (repairVisitConfirmationAgent as any).instructions = prompt;
+    repairVisitConfirmationAgent.instructions = prompt;
     try {
       await langfuse.logPrompt("repair-scheduling", { label: "production", agentId: "repair-scheduling" }, prompt, { length: prompt?.length || 0 });
     } catch {}

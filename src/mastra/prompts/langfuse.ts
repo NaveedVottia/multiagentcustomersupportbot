@@ -47,7 +47,7 @@ export async function loadLangfusePrompt(
   try {
     // SDK handles internal caching; expose configurable TTL
     const ttlSeconds = Math.max(1, Math.floor(cacheTtlMs / 1000));
-    const promptClient = await client.getPrompt(name, undefined, { cacheTtlSeconds: ttlSeconds });
+    const promptClient = await client.getPrompt(name);
     const text = promptClient?.prompt ?? "";
     if (text) {
       promptCache[cacheKey] = { content: text, fetchedAt: Date.now() };

@@ -5,6 +5,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { mastraPromise } from "./mastra/index";
 import { langfuse } from "./integrations/langfuse";
+import { tracing } from "./integrations/tracing";
 
 // Load environment variables
 dotenv.config({ path: "./server.env" });
@@ -59,6 +60,8 @@ app.use((req, res, next) => {
 app.use(cors({
   origin: process.env.CORS_ORIGIN || "*",
   credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-session-id'],
 }));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
@@ -126,24 +129,56 @@ function encodeChunk(chunk: string): string {
   return chunk.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n');
 }
 
-// Stream Mastra response using f0ed protocol
-async function streamMastraResponse(stream: any, res: Response): Promise<number> {
+// Stream Mastra response using f0ed protocol with ai.streamtext tracing
+async function streamMastraResponse(stream: any, res: Response, conversationData?: {
+  sessionId: string;
+  agentId: string;
+  userInput: string;
+  startTime: number;
+}): Promise<number> {
   let totalLength = 0;
+  let accumulatedText = '';
   
   try {
     for await (const chunk of stream.textStream) {
       if (typeof chunk === 'string' && chunk.trim()) {
         totalLength += chunk.length;
+        accumulatedText += chunk;
+        
         // Split into characters and emit each as a separate 0: line
         for (const ch of chunk) {
           res.write(`0:"${encodeChunk(ch)}"\n`);
         }
       }
     }
+    
+    // Create conversation flow trace after response is complete
+    if (conversationData && accumulatedText) {
+      const processingTime = Math.round((Date.now() - conversationData.startTime) / 1000);
+      await tracing.createConversationFlowTrace(conversationData.sessionId, {
+        userInput: conversationData.userInput,
+        agentId: conversationData.agentId,
+        agentOutput: accumulatedText,
+        processingTime: processingTime,
+      });
+    }
+    
   } catch (error) {
     console.error("❌ Error streaming response:", error);
     const fallback = "申し訳ございませんが、エラーが発生しました。";
     totalLength = fallback.length;
+    
+    // Create conversation flow trace for error case
+    if (conversationData) {
+      const processingTime = Math.round((Date.now() - conversationData.startTime) / 1000);
+      await tracing.createConversationFlowTrace(conversationData.sessionId, {
+        userInput: conversationData.userInput,
+        agentId: conversationData.agentId,
+        agentOutput: fallback,
+        processingTime: processingTime,
+      });
+    }
+    
     for (const ch of fallback) {
       res.write(`0:"${encodeChunk(ch)}"\n`);
     }
@@ -152,6 +187,15 @@ async function streamMastraResponse(stream: any, res: Response): Promise<number>
   // If nothing was streamed, emit an empty line to satisfy protocol
   if (totalLength === 0) {
     const msg = "";
+    if (conversationData) {
+      const processingTime = Math.round((Date.now() - conversationData.startTime) / 1000);
+      await tracing.createConversationFlowTrace(conversationData.sessionId, {
+        userInput: conversationData.userInput,
+        agentId: conversationData.agentId,
+        agentOutput: msg,
+        processingTime: processingTime,
+      });
+    }
     res.write(`0:"${encodeChunk(msg)}"\n`);
   }
 
@@ -196,15 +240,15 @@ app.post("/api/agents/customer-identification/test", async (req: Request, res: R
       return res.status(500).json({ error: "Agent 'customer-identification' not found" });
     }
     
-    const resolvedAgent = await agent;
+    const orchestratorAgent = await agent;
     console.log("🔍 Resolved agent for test");
-    console.log("🔍 Agent methods:", Object.getOwnPropertyNames(Object.getPrototypeOf(resolvedAgent)));
-    console.log("🔍 Agent type:", typeof resolvedAgent);
+    console.log("🔍 Agent methods:", Object.getOwnPropertyNames(Object.getPrototypeOf(orchestratorAgent)));
+    console.log("🔍 Agent type:", typeof orchestratorAgent);
     
     // Try to execute without streaming
-    if (typeof resolvedAgent.stream === 'function') {
+    if (typeof orchestratorAgent.stream === 'function') {
       console.log("🔍 Testing stream method...");
-      const stream = await resolvedAgent.stream(messages);
+      const stream = await orchestratorAgent.stream(messages);
       console.log("🔍 Stream created, trying to read...");
       
       // Try to read from the stream
@@ -216,14 +260,14 @@ app.post("/api/agents/customer-identification/test", async (req: Request, res: R
       }
       
       return res.json({ success: true, result: result });
-    } else if (typeof resolvedAgent.execute === 'function') {
-      const result = await resolvedAgent.execute(messages);
+    } else if (typeof orchestratorAgent.execute === 'function') {
+      const result = await orchestratorAgent.execute(messages);
       return res.json({ success: true, result: result });
-    } else if (typeof resolvedAgent.run === 'function') {
-      const result = await resolvedAgent.run(messages);
+    } else if (typeof orchestratorAgent.run === 'function') {
+      const result = await orchestratorAgent.run(messages);
       return res.json({ success: true, result: result });
     } else {
-      return res.status(500).json({ error: "Agent does not have execute or run method", methods: Object.getOwnPropertyNames(Object.getPrototypeOf(resolvedAgent)) });
+      return res.status(500).json({ error: "Agent does not have execute or run method", methods: Object.getOwnPropertyNames(Object.getPrototypeOf(orchestratorAgent)) });
     }
     
   } catch (error: unknown) {
@@ -235,6 +279,8 @@ app.post("/api/agents/customer-identification/test", async (req: Request, res: R
 
 // Main endpoint for the customer identification agent (main entry point)
 app.post("/api/agents/customer-identification/stream", async (req: Request, res: Response) => {
+  const startTime = Date.now();
+  
   try {
     const messages = Array.isArray(req.body?.messages) ? req.body.messages : [];
     const sessionId = getSessionId(req);
@@ -300,10 +346,10 @@ app.post("/api/agents/customer-identification/stream", async (req: Request, res:
         const mastra = await mastraPromise;
         const customerAgent = mastra.getAgentById("customer-identification");
         if (customerAgent) {
-          const resolvedAgent = await customerAgent;
-          if (resolvedAgent.memory) {
-            resolvedAgent.memory.set("customerId", session.customerId);
-            resolvedAgent.memory.set("sessionId", sessionId);
+          const orchestratorAgent = await customerAgent;
+          if (orchestratorAgent.memory) {
+            orchestratorAgent.memory.set("customerId", session.customerId);
+            orchestratorAgent.memory.set("sessionId", sessionId);
             console.log(`🔍 Stored customer data in shared memory: ${session.customerId}`);
           }
         }
@@ -324,10 +370,10 @@ app.post("/api/agents/customer-identification/stream", async (req: Request, res:
     prepareStreamHeaders(res);
     
     // Execute the agent using Mastra's stream method
-    const resolvedAgent = await agent; // Resolve the agent promise first
-    console.log("🔍 Resolved agent methods:", Object.getOwnPropertyNames(Object.getPrototypeOf(resolvedAgent)));
-    console.log("🔍 Resolved agent type:", typeof resolvedAgent);
-    console.log("🔍 Resolved agent stream method:", typeof resolvedAgent.stream);
+    const orchestratorAgent = await agent; // Resolve the agent promise first
+    console.log("🔍 Resolved agent methods:", Object.getOwnPropertyNames(Object.getPrototypeOf(orchestratorAgent)));
+    console.log("🔍 Resolved agent type:", typeof orchestratorAgent);
+    console.log("🔍 Resolved agent stream method:", typeof orchestratorAgent.stream);
     
     // Create a context object with session data for tools only
     const toolContext = {
@@ -338,13 +384,20 @@ app.post("/api/agents/customer-identification/stream", async (req: Request, res:
     
     console.log(`🔍 Tool context:`, JSON.stringify(toolContext, null, 2));
     
+    // Create proper memory identifiers for agent calls - use unique thread per session
+    const memoryIds = {
+      resource: sessionId,
+      thread: `customer-conversation-${sessionId}`
+    };
+    
+    console.log(`🔍 [DEBUG] Using memory identifiers:`, memoryIds);
+    
     // Try different methods based on Mastra documentation
     let stream;
-    if (typeof resolvedAgent.stream === 'function') {
-      // Don't pass session data in context to avoid message format issues
-      stream = await resolvedAgent.stream(normalizedMessages);
-    } else if (typeof resolvedAgent.execute === 'function') {
-      const result = await resolvedAgent.execute(normalizedMessages);
+    if (typeof orchestratorAgent.stream === 'function') {
+      stream = await orchestratorAgent.stream(normalizedMessages, { memory: memoryIds });
+    } else if (typeof orchestratorAgent.execute === 'function') {
+      const result = await orchestratorAgent.execute(normalizedMessages);
       // Convert result to stream format for Mastra f0ed protocol
       stream = {
         textStream: (async function* () {
@@ -359,8 +412,8 @@ app.post("/api/agents/customer-identification/stream", async (req: Request, res:
           }
         })()
       };
-    } else if (typeof resolvedAgent.run === 'function') {
-      const result = await resolvedAgent.run(normalizedMessages);
+    } else if (typeof orchestratorAgent.run === 'function') {
+      const result = await orchestratorAgent.run(normalizedMessages);
       // Convert result to stream format for Mastra f0ed protocol
       stream = {
         textStream: (async function* () {
@@ -376,7 +429,7 @@ app.post("/api/agents/customer-identification/stream", async (req: Request, res:
         })()
       };
     } else {
-      throw new Error(`Agent does not have stream, execute, or run method. Available methods: ${Object.getOwnPropertyNames(Object.getPrototypeOf(resolvedAgent)).join(', ')}`);
+      throw new Error(`Agent does not have stream, execute, or run method. Available methods: ${Object.getOwnPropertyNames(Object.getPrototypeOf(orchestratorAgent)).join(', ')}`);
     }
     
     // Generate a unique message ID
@@ -386,7 +439,12 @@ app.post("/api/agents/customer-identification/stream", async (req: Request, res:
     writeMessageId(res, messageId);
     
     // Stream using Mastra-compliant helper (0:"..." lines)
-    const fullTextLength = await streamMastraResponse(stream, res);
+    const fullTextLength = await streamMastraResponse(stream, res, {
+      sessionId,
+      agentId: targetAgentId,
+      userInput,
+      startTime,
+    });
     
     // Send finish metadata
     writeFinish(res, fullTextLength);
@@ -402,18 +460,76 @@ app.post("/api/agents/customer-identification/stream", async (req: Request, res:
   }
 });
 
-// Legacy endpoint for UI compatibility - redirects to customer-identification
+// Orchestrator endpoint - determines which agent to use based on conversation context
 app.post("/api/agents/repair-workflow-orchestrator/stream", async (req: Request, res: Response) => {
+  const startTime = Date.now();
+  
   try {
     const messages = Array.isArray(req.body?.messages) ? req.body.messages : [];
-    const agent = await getAgentById("customer-identification");
+    const sessionId = getSessionId(req);
+    const session = getSession(sessionId);
+    
+    console.log(`🔍 [ORCHESTRATOR] Processing ${messages.length} messages for session: ${sessionId}`);
+    
+    // Determine which agent to use based on conversation context
+    let targetAgentId = "customer-identification"; // Default to customer identification
+    
+    if (messages.length > 0) {
+      const lastMessage = messages[messages.length - 1];
+      // Handle both string and array content formats
+      let messageContent = "";
+      if (lastMessage.content) {
+        if (typeof lastMessage.content === 'string') {
+          messageContent = lastMessage.content.toLowerCase();
+        } else if (Array.isArray(lastMessage.content)) {
+          messageContent = lastMessage.content
+            .filter((item: any) => item.type === 'text' && item.text)
+            .map((item: any) => item.text)
+            .join(' ')
+            .toLowerCase();
+        }
+      }
+      
+      // Check if customer is already identified
+      if (session.customerId) {
+        // Customer is identified, route to appropriate agent based on request
+        if (messageContent.includes("1") || messageContent.includes("修理履歴") || messageContent.includes("repair history")) {
+          targetAgentId = "repair-history-ticket";
+        } else if (messageContent.includes("2") || messageContent.includes("登録製品") || messageContent.includes("product")) {
+          targetAgentId = "repair-agent";
+        } else if (messageContent.includes("3") || messageContent.includes("予約") || messageContent.includes("schedule")) {
+          targetAgentId = "repair-scheduling";
+        } else if (messageContent.includes("4") || messageContent.includes("メイン") || messageContent.includes("main")) {
+          targetAgentId = "customer-identification";
+        }
+      }
+    }
+    
+    console.log(`🎯 [ORCHESTRATOR] Routing to agent: ${targetAgentId}`);
+    
+    const agent = await getAgentById(targetAgentId);
     
     if (!agent) {
-      return res.status(500).json({ error: "Agent 'customer-identification' not found" });
+      return res.status(500).json({ error: `Agent '${targetAgentId}' not found` });
     }
 
     console.log(`🔍 Processing UI request with ${messages.length} messages`);
     console.log(`🔍 Request body:`, JSON.stringify(req.body, null, 2));
+    
+    // Store sessionId in agent memory for proper memory sharing
+    const orchestratorAgent = await agent;
+    if (orchestratorAgent.memory) {
+      orchestratorAgent.memory.set("sessionId", sessionId);
+    }
+    
+    // Create proper memory identifiers for agent calls as per Mastra documentation
+    // Create proper memory identifiers for agent calls - use unique thread per session
+    const memoryIds = {
+      resource: sessionId,
+      thread: `customer-conversation-${sessionId}`
+    };
+    
+    console.log(`🔍 [ORCHESTRATOR] Using memory identifiers:`, memoryIds);
     
     // Normalize messages to handle complex UI format
     const normalizedMessages = messages.map((msg: any) => {
@@ -437,21 +553,23 @@ app.post("/api/agents/repair-workflow-orchestrator/stream", async (req: Request,
     
     console.log(`🔍 Normalized messages:`, JSON.stringify(normalizedMessages, null, 2));
     
+    // Extract user input for tracing
+    const userInput = normalizedMessages[normalizedMessages.length - 1]?.content || "";
+    
     // Set headers for streaming response
     prepareStreamHeaders(res);
     
     // Execute the agent using Mastra's stream method
-    const resolvedAgent = await agent; // Resolve the agent promise first
-    console.log("🔍 Resolved agent methods:", Object.getOwnPropertyNames(Object.getPrototypeOf(resolvedAgent)));
-    console.log("🔍 Resolved agent type:", typeof resolvedAgent);
-    console.log("🔍 Resolved agent stream method:", typeof resolvedAgent.stream);
+    console.log("🔍 Orchestrator agent methods:", Object.getOwnPropertyNames(Object.getPrototypeOf(orchestratorAgent)));
+    console.log("🔍 Orchestrator agent type:", typeof orchestratorAgent);
+    console.log("🔍 Orchestrator agent stream method:", typeof orchestratorAgent.stream);
     
     // Try different methods based on Mastra documentation
     let stream;
-    if (typeof resolvedAgent.stream === 'function') {
-      stream = await resolvedAgent.stream(normalizedMessages);
-    } else if (typeof resolvedAgent.execute === 'function') {
-      const result = await resolvedAgent.execute(normalizedMessages);
+    if (typeof orchestratorAgent.stream === 'function') {
+      stream = await orchestratorAgent.stream(normalizedMessages, { memory: memoryIds });
+    } else if (typeof orchestratorAgent.execute === 'function') {
+      const result = await orchestratorAgent.execute(normalizedMessages);
       // Convert result to stream format for Mastra f0ed protocol
       stream = {
         textStream: (async function* () {
@@ -466,8 +584,8 @@ app.post("/api/agents/repair-workflow-orchestrator/stream", async (req: Request,
           }
         })()
       };
-    } else if (typeof resolvedAgent.run === 'function') {
-      const result = await resolvedAgent.run(normalizedMessages);
+    } else if (typeof orchestratorAgent.run === 'function') {
+      const result = await orchestratorAgent.run(normalizedMessages);
       // Convert result to stream format for Mastra f0ed protocol
       stream = {
         textStream: (async function* () {
@@ -483,7 +601,7 @@ app.post("/api/agents/repair-workflow-orchestrator/stream", async (req: Request,
         })()
       };
     } else {
-      throw new Error(`Agent does not have stream, execute, or run method. Available methods: ${Object.getOwnPropertyNames(Object.getPrototypeOf(resolvedAgent)).join(', ')}`);
+      throw new Error(`Agent does not have stream, execute, or run method. Available methods: ${Object.getOwnPropertyNames(Object.getPrototypeOf(orchestratorAgent)).join(', ')}`);
     }
     
     // Generate a unique message ID
@@ -493,7 +611,12 @@ app.post("/api/agents/repair-workflow-orchestrator/stream", async (req: Request,
     writeMessageId(res, messageId);
     
     // Stream using Mastra-compliant helper (0:"..." lines)
-    const fullTextLength = await streamMastraResponse(stream, res);
+    const fullTextLength = await streamMastraResponse(stream, res, {
+      sessionId,
+      agentId: targetAgentId,
+      userInput,
+      startTime,
+    });
     
     // Send finish metadata
     writeFinish(res, fullTextLength);
@@ -508,10 +631,21 @@ app.post("/api/agents/repair-workflow-orchestrator/stream", async (req: Request,
   }
 });
 
+// OPTIONS handlers for CORS preflight
+app.options("/api/agents/customer-identification/stream", cors());
+app.options("/api/agents/repair-workflow-orchestrator/stream", cors());
+app.options("/api/agents/repair-agent/stream", cors());
+app.options("/api/agents/repair-history-ticket/stream", cors());
+app.options("/api/agents/repair-scheduling/stream", cors());
+app.options("/api/agents/orchestrator/stream", cors());
+
 // Legacy endpoint for UI compatibility - redirects to customer-identification
 app.post("/api/agents/orchestrator/stream", async (req: Request, res: Response) => {
+  const startTime = Date.now();
+  
   try {
     const messages = Array.isArray(req.body?.messages) ? req.body.messages : [];
+    const sessionId = getSessionId(req);
     const agent = await getAgentById("customer-identification");
     
     if (!agent) {
@@ -538,12 +672,16 @@ app.post("/api/agents/orchestrator/stream", async (req: Request, res: Response) 
       return msg;
     });
     
+    // Extract user input for tracing
+    const userInput = normalizedMessages[normalizedMessages.length - 1]?.content || "";
+    const targetAgentId = "customer-identification";
+    
     // Set headers for streaming response
     prepareStreamHeaders(res);
     
     // Execute the agent using Mastra's stream method
-    const resolvedAgent = await agent;
-    const stream = await resolvedAgent.stream(normalizedMessages);
+    const orchestratorAgent = await agent;
+    const stream = await orchestratorAgent.stream(normalizedMessages);
     
     // Generate a unique message ID
     const messageId = `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
@@ -552,7 +690,12 @@ app.post("/api/agents/orchestrator/stream", async (req: Request, res: Response) 
     writeMessageId(res, messageId);
     
     // Stream using Mastra-compliant helper (0:"..." lines)
-    const fullTextLength = await streamMastraResponse(stream, res);
+    const fullTextLength = await streamMastraResponse(stream, res, {
+      sessionId,
+      agentId: targetAgentId,
+      userInput,
+      startTime,
+    });
     
     // Send finish metadata
     writeFinish(res, fullTextLength);
@@ -569,20 +712,27 @@ app.post("/api/agents/orchestrator/stream", async (req: Request, res: Response) 
 
 // Individual agent endpoints for direct access
 app.post("/api/agents/repair-agent/stream", async (req: Request, res: Response) => {
+  const startTime = Date.now();
+  
   try {
     const messages = Array.isArray(req.body?.messages) ? req.body.messages : [];
+    const sessionId = getSessionId(req);
     const agent = await getAgentById("repair-agent");
     
     if (!agent) {
       return res.status(500).json({ error: "Repair agent not found" });
     }
 
+    // Extract user input for tracing
+    const userInput = messages[messages.length - 1]?.content || "";
+    const targetAgentId = "repair-agent";
+
     // Set headers for streaming response
     prepareStreamHeaders(res);
 
     // Execute the agent using Mastra's stream method
-    const resolvedAgent = await agent; // Resolve the agent promise first
-    const stream = await resolvedAgent.stream(messages);
+    const orchestratorAgent = await agent; // Resolve the agent promise first
+    const stream = await orchestratorAgent.stream(messages);
     
     // Generate a unique message ID
     const messageId = `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
@@ -591,7 +741,12 @@ app.post("/api/agents/repair-agent/stream", async (req: Request, res: Response) 
     writeMessageId(res, messageId);
     
     // Stream using Mastra-compliant helper (0:"..." lines)
-    const fullTextLength = await streamMastraResponse(stream, res);
+    const fullTextLength = await streamMastraResponse(stream, res, {
+      sessionId,
+      agentId: targetAgentId,
+      userInput,
+      startTime,
+    });
     
     // Send finish metadata
     writeFinish(res, fullTextLength);
@@ -607,20 +762,27 @@ app.post("/api/agents/repair-agent/stream", async (req: Request, res: Response) 
 });
 
 app.post("/api/agents/repair-history-ticket/stream", async (req: Request, res: Response) => {
+  const startTime = Date.now();
+  
   try {
     const messages = Array.isArray(req.body?.messages) ? req.body.messages : [];
+    const sessionId = getSessionId(req);
     const agent = await getAgentById("repair-history-ticket");
     
     if (!agent) {
       return res.status(500).json({ error: "Repair history agent not found" });
     }
 
+    // Extract user input for tracing
+    const userInput = messages[messages.length - 1]?.content || "";
+    const targetAgentId = "repair-history-ticket";
+
     // Set headers for streaming response
     prepareStreamHeaders(res);
 
     // Execute the agent using Mastra's stream method
-    const resolvedAgent = await agent; // Resolve the agent promise first
-    const stream = await resolvedAgent.stream(messages);
+    const orchestratorAgent = await agent; // Resolve the agent promise first
+    const stream = await orchestratorAgent.stream(messages);
     
     // Generate a unique message ID
     const messageId = `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
@@ -629,7 +791,12 @@ app.post("/api/agents/repair-history-ticket/stream", async (req: Request, res: R
     writeMessageId(res, messageId);
     
     // Stream using Mastra-compliant helper (0:"..." lines)
-    const fullTextLength = await streamMastraResponse(stream, res);
+    const fullTextLength = await streamMastraResponse(stream, res, {
+      sessionId,
+      agentId: targetAgentId,
+      userInput,
+      startTime,
+    });
     
     // Send finish metadata
     writeFinish(res, fullTextLength);
@@ -645,6 +812,8 @@ app.post("/api/agents/repair-history-ticket/stream", async (req: Request, res: R
 });
 
 app.post("/api/agents/repair-scheduling/stream", async (req: Request, res: Response) => {
+  const startTime = Date.now();
+  
   try {
     const messages = Array.isArray(req.body?.messages) ? req.body.messages : [];
     const sessionId = getSessionId(req);
@@ -654,6 +823,10 @@ app.post("/api/agents/repair-scheduling/stream", async (req: Request, res: Respo
     if (!agent) {
       return res.status(500).json({ error: "Repair scheduling agent not found" });
     }
+
+    // Extract user input for tracing
+    const userInput = messages[messages.length - 1]?.content || "";
+    const targetAgentId = "repair-scheduling";
 
     // Set headers for streaming response
     prepareStreamHeaders(res);
@@ -666,8 +839,8 @@ app.post("/api/agents/repair-scheduling/stream", async (req: Request, res: Respo
     };
 
     // Execute the agent using Mastra's stream method
-    const resolvedAgent = await agent; // Resolve the agent promise first
-    const stream = await resolvedAgent.stream(messages);
+    const orchestratorAgent = await agent; // Resolve the agent promise first
+    const stream = await orchestratorAgent.stream(messages);
     
     // Generate a unique message ID
     const messageId = `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
@@ -676,7 +849,12 @@ app.post("/api/agents/repair-scheduling/stream", async (req: Request, res: Respo
     writeMessageId(res, messageId);
     
     // Stream using Mastra-compliant helper (0:"..." lines)
-    const fullTextLength = await streamMastraResponse(stream, res);
+    const fullTextLength = await streamMastraResponse(stream, res, {
+      sessionId,
+      agentId: targetAgentId,
+      userInput,
+      startTime,
+    });
     
     // Send finish metadata
     writeFinish(res, fullTextLength);

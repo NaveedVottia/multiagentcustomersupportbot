@@ -230,25 +230,8 @@ export class LangfuseIntegration {
     output: any,
     metadata?: any
   ): Promise<void> {
-    try {
-      this.tryInitFromEnv();
-      if (!this.enabled || !this.langfuseTracing || (traceId && traceId.startsWith('trace_'))) {
-        // This is a fallback trace ID, just log locally
-        console.log(`[Langfuse] Tool execution (fallback): ${toolName}`, { input, output, metadata });
-        return;
-      }
-      
-      // Use proper Langfuse tracing
-      await this.langfuseTracing.trace({
-        name: `tool:${toolName}`,
-        input,
-        output,
-        metadata: { traceId, ...metadata },
-      });
-      console.log(`[Langfuse] Tool execution logged: ${toolName}`);
-    } catch (error) {
-      console.error(`[Langfuse] Error logging tool execution:`, error);
-    }
+    // Tool execution logging disabled - only ai.streamtext tracing enabled
+    return;
   }
 
   async endTrace(traceId: string | null, finalMetadata?: any): Promise<void> {

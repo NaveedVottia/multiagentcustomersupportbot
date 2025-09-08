@@ -4,68 +4,109 @@ import { bedrock } from "@ai-sdk/amazon-bedrock";
 import { customerTools } from "../../tools/sanden/customer-tools";
 import { commonTools } from "../../tools/sanden/common-tools";
 import { orchestratorTools } from "../../tools/sanden/orchestrator-tools";
-import { sessionData } from "../../lib/shared-memory";
 import { Langfuse } from "langfuse";
 import { z } from "zod";
 import dotenv from "dotenv";
+import { sharedMemory, sessionData } from "../lib/shared-memory";
 
 // Load environment variables
 dotenv.config({ path: "./server.env" });
 
-// Create a proper Mastra Memory instance for shared memory
-const sharedMemory = new Memory();
-
-// Temporary hardcoded fallback until Langfuse is fixed
-let CUSTOMER_IDENTIFICATION_INSTRUCTIONS = `あなたは顧客識別エージェントです。
-
-【役割】
-- 顧客情報の収集と検証
-- 修理サービスメニューの提供
-- 顧客が見つからない場合は新規登録案内
-
-【顧客識別プロセス】
-1. 会社名、メールアドレス、電話番号を収集
-2. データベースで顧客検索
-3. 顧客が見つかった場合：メニュー表示
-4. 顧客が見つからない場合：新規登録案内
+// Use a fallback prompt initially, will be updated when Langfuse loads
+let CUSTOMER_IDENTIFICATION_INSTRUCTIONS = `「顧客識別エージェント」です。顧客の識別と認証を行い、修理サービスメニューを提供します。
 
 【出力形式】
-- プレーンテキストのみ
+- プレーンテキストのみ。JSON/コード/内部状態/ツール名は出力しない。
+- 処理中表記は出力しない（フロント側で表示）。
+
+【顧客識別プロセス】
+1. 顧客情報の収集（会社名、メールアドレス、電話番号）
+2. データベースでの顧客検索
+3. 顧客が見つかった場合：修理サービスメニュー表示
+4. 顧客が見つからない場合：新規登録案内
+
+【使用ツール】
+- lookupCustomerFromDatabase: 顧客データベース検索
+- logCustomerData: 顧客データの記録
+- directRepairHistory: 修理履歴の直接取得（委譲なし）
+- directProductLookup: 顧客製品の直接取得（委譲なし）
+- directScheduling: 修理予約の直接処理（委譲なし）
+- delegateTo: 他のエージェントへの委譲
+
+【顧客識別フロー】
+1. 初回アクセス時：「顧客識別のお手伝いをさせていただきます。以下の情報をお教えください：会社名、メールアドレス、電話番号」
+2. 顧客情報収集後、lookupCustomerFromDatabaseツールで検索
+3. 顧客が見つかった場合：
+   「顧客情報が確認できました。修理サービスメニューをご案内いたします。
+
+   修理サービスメニュー
+   1. 顧客の修理履歴を確認
+   2. 顧客の登録製品を確認
+   3. 修理予約の予約を申し込む
+   4. メインメニューに戻る
+
+   番号でお答えください。直接入力も可能です。」
+4. 顧客が見つからない場合：
+   「申し訳ございませんが、該当する顧客情報が見つかりませんでした。新規登録をご希望の場合は、repair-agentエージェントに委譲いたします。」
+   → repair-agentエージェントに委譲
+
+【自然言語キーワード認識】
+以下のキーワードや表現を認識して適切なツールを呼び出してください：
+
+【修理履歴関連キーワード】
+- "修理履歴"、"repair history"、"修理記録"、"過去の修理"、"修理の履歴"
+- "show me my repair history"、"repair records"、"maintenance history"
+- "1"、"修理履歴を確認"、"履歴を見たい"
+
+【製品情報関連キーワード】
+- "製品情報"、"product information"、"登録製品"、"製品一覧"
+- "show me my products"、"registered products"、"machine list"
+- "2"、"製品を確認"、"製品を見たい"
+
+【修理予約関連キーワード】
+- "修理予約"、"repair appointment"、"予約したい"、"修理を申し込む"
+- "schedule repair"、"book repair"、"make appointment"、"repair request"
+- "修理をお願いします"、"予約をお願いします"、"修理依頼"
+- "3"、"修理予約を申し込む"、"予約したい"
+
+【修理サービスメニュー処理】
+- 修理履歴関連キーワード → directRepairHistoryツールで直接修理履歴を取得して表示
+- 製品情報関連キーワード → directProductLookupツールで直接製品情報を取得して表示
+- 修理予約関連キーワード → directSchedulingツールで直接修理予約を処理
+- 「4」選択 → メインメニューに戻る
+
+【重要：ツール使用の実行】
+- 修理履歴、製品情報、修理予約の要求は直接ツールを使用する（delegateToは使用しない）
+- 各ツールは顧客IDを自動的に共有メモリから取得する
+- ツールの結果をそのまま表示し、追加の情報は作成しない
+
+【修理履歴取得方法】
+修理履歴関連キーワードが検出された場合：
+1. directRepairHistoryツールを呼び出し
+2. 取得した修理履歴データを美しくフォーマットして表示
+3. 各修理記録の詳細（修理ID、日時、問題内容、ステータス、対応者）を含める
+4. 現在の状況（未対応、対応中、解決済み）を明確に表示
+5. 優先度の高い案件を強調表示
+
+【製品情報取得方法】
+製品情報関連キーワードが検出された場合：
+1. directProductLookupツールを呼び出し
+2. 取得した製品データを美しくフォーマットして表示
+3. 各製品の詳細（製品ID、カテゴリ、型式、シリアル番号、保証状況）を含める
+
+【修理予約処理方法】
+修理予約関連キーワードが検出された場合：
+1. directSchedulingツールを呼び出し
+2. 顧客の要求に基づいて修理予約を作成
+3. 予約確認メッセージを表示
+
+【言語】
+- 既定は日本語。希望時のみ英語。
+
+【会話スタイル】
 - 丁寧で親切な対応
-
-【メニュー】
-1. 顧客の修理履歴を確認
-2. 顧客の登録製品を確認
-3. 修理予約の予約を申し込む
-4. メインメニューに戻る
-
-【修理履歴表示フォーマット】
-修理履歴を表示する際は、以下のヘッダーを使用してください：
-- 修理ID
-- 日時
-- 製品ID
-- 顧客ID
-- 問題内容
-- ステータス
-- 訪問要否
-- 優先度
-- 対応者
-
-例：
-修理ID: REP001
-日時: 2025-01-01 10:00
-製品ID: PROD001
-顧客ID: CUST001
-問題内容: 画面が表示されない
-ステータス: 解決済み
-訪問要否: 要
-優先度: 高
-対応者: 山本
-
-【ツール使用】
-- 顧客検索には lookupCustomerFromDatabase を使用
-- メニュー選択時は適切なツールを直接呼び出し`;
-
+- 顧客情報の重要性を説明
+- セキュリティに配慮した情報収集`;
 
 // Load Langfuse prompt asynchronously
 async function loadLangfusePrompt() {
@@ -142,6 +183,32 @@ const createSessionAwareMemory = (sessionId: string) => {
     }
   };
 };
+
+// Default shared memory for backward compatibility
+// Create a session-aware memory factory
+const createSessionAwareMemoryFactory = () => {
+  const memoryInstances = new Map();
+  
+  return {
+    getMemory: (sessionId: string = "default") => {
+      if (!memoryInstances.has(sessionId)) {
+        memoryInstances.set(sessionId, createSessionAwareMemory(sessionId));
+      }
+      return memoryInstances.get(sessionId);
+    },
+    set: (key: string, value: any, sessionId: string = "default") => {
+      const memory = memoryInstances.get(sessionId) || createSessionAwareMemory(sessionId);
+      memory.set(key, value);
+      memoryInstances.set(sessionId, memory);
+    },
+    get: (key: string, sessionId: string = "default") => {
+      const memory = memoryInstances.get(sessionId);
+      return memory ? memory.get(key) : undefined;
+    }
+  };
+};
+
+const sharedMemory = createSessionAwareMemoryFactory();
 
 // Working memory template for customer profiles
 const WORKING_MEMORY_TEMPLATE = `# Customer Profile
@@ -223,43 +290,13 @@ const directRepairHistoryTool = {
       console.log(`❌ [DEBUG] REPAIR - Error getting sessionId from agent memory:`, error);
     }
     
-    // If customerId is not provided, try to get it from agent memory using proper memory identifiers
+    // If customerId is not provided, try to get it from shared memory using sessionId
     if (!customerId) {
       try {
-        // Get sessionId from agent memory for proper memory identifiers
-        let sessionId = "default";
-        try {
-          const agentMemory = args.agent?.memory;
-          if (agentMemory && typeof agentMemory.get === 'function') {
-            sessionId = agentMemory.get("sessionId") || "default";
-          }
-        } catch (error) {
-          console.log(`❌ [DEBUG] REPAIR - Error getting sessionId from agent memory:`, error);
-        }
-        
-        // Use proper memory identifiers as per Mastra documentation
-        const memoryIds = { 
-          resource: sessionId, 
-          thread: "customer-conversation" 
-        };
-        
-        try {
-          customerId = await sessionData.getCustomerField(sessionId, "customerId");
-        } catch (error) {
-          console.log(`❌ [DEBUG] REPAIR - Memory API error, trying fallback:`, error);
-          // Fallback: try to get from agent memory directly
-          if (args.agent?.memory) {
-            customerId = args.agent.memory.get("customerId");
-          }
-        }
-        
-        if (customerId) {
-          console.log(`🔍 [DEBUG] REPAIR - Retrieved customerId from shared memory with IDs:`, memoryIds, customerId);
-        } else {
-          console.log(`🔍 [DEBUG] REPAIR - No customerId found in shared memory with IDs:`, memoryIds);
-        }
+        customerId = sharedMemory.get("customerId", sessionId);
+        console.log(`🔍 [DEBUG] REPAIR - Retrieved customer ID from memory (session: ${sessionId}): ${customerId}`);
       } catch (error) {
-        console.log(`❌ [DEBUG] REPAIR - Error accessing shared memory:`, error);
+        console.log(`❌ [DEBUG] REPAIR - Error getting customer ID from memory:`, error);
       }
     } else {
       console.log(`🔍 [DEBUG] REPAIR - Using provided customerId: ${customerId}`);
@@ -327,49 +364,13 @@ const directProductLookupTool = {
       console.log(`❌ [DEBUG] PRODUCT - Error getting sessionId from agent memory:`, error);
     }
     
-    // If no sessionId, try to get from context
-    if (sessionId === "default" && args.context?.sessionId) {
-      sessionId = args.context.sessionId;
-      console.log(`🔍 [DEBUG] PRODUCT - Using sessionId from context: ${sessionId}`);
-    }
-    
-    // If customerId is not provided, try to get it from agent memory using proper memory identifiers
+    // If customerId is not provided, try to get it from shared memory using sessionId
     if (!customerId) {
       try {
-        // Get sessionId from agent memory for proper memory identifiers
-        let sessionId = "default";
-        try {
-          const agentMemory = args.agent?.memory;
-          if (agentMemory && typeof agentMemory.get === 'function') {
-            sessionId = agentMemory.get("sessionId") || "default";
-          }
-        } catch (error) {
-          console.log(`❌ [DEBUG] PRODUCT - Error getting sessionId from agent memory:`, error);
-        }
-        
-        // Use proper memory identifiers as per Mastra documentation
-        const memoryIds = { 
-          resource: sessionId, 
-          thread: "customer-conversation" 
-        };
-        
-        try {
-          customerId = await sharedMemory.get("customerId");
-        } catch (error) {
-          console.log(`❌ [DEBUG] PRODUCT - Memory API error, trying fallback:`, error);
-          // Fallback: try to get from agent memory directly
-          if (args.agent?.memory) {
-            customerId = args.agent.memory.get("customerId");
-          }
-        }
-        
-        if (customerId) {
-          console.log(`🔍 [DEBUG] PRODUCT - Retrieved customerId from shared memory with IDs:`, memoryIds, customerId);
-        } else {
-          console.log(`🔍 [DEBUG] PRODUCT - No customerId found in shared memory with IDs:`, memoryIds);
-        }
+        customerId = sharedMemory.get("customerId", sessionId);
+        console.log(`🔍 [DEBUG] PRODUCT - Retrieved customer ID from memory (session: ${sessionId}): ${customerId}`);
       } catch (error) {
-        console.log(`❌ [DEBUG] PRODUCT - Error accessing shared memory:`, error);
+        console.log(`❌ [DEBUG] PRODUCT - Error getting customer ID from memory:`, error);
       }
     } else {
       console.log(`🔍 [DEBUG] PRODUCT - Using provided customerId: ${customerId}`);
@@ -439,18 +440,13 @@ const directSchedulingTool = {
       console.log(`❌ [DEBUG] SCHEDULING - Error getting sessionId from agent memory:`, error);
     }
     
-    // If customerId is not provided, try to get it from agent memory
+    // If customerId is not provided, try to get it from shared memory using sessionId
     if (!customerId) {
       try {
-        // Try to get customer ID from shared memory
-        customerId = await sharedMemory.get("customerId");
-        if (customerId) {
-          console.log(`🔍 [DEBUG] SCHEDULING - Retrieved customerId from shared memory: ${customerId}`);
-        } else {
-          console.log(`🔍 [DEBUG] SCHEDULING - No customerId found in shared memory`);
-        }
+        customerId = sharedMemory.get("customerId", sessionId);
+        console.log(`🔍 [DEBUG] SCHEDULING - Retrieved customer ID from memory (session: ${sessionId}): ${customerId}`);
       } catch (error) {
-        console.log(`❌ [DEBUG] SCHEDULING - Error accessing shared memory:`, error);
+        console.log(`❌ [DEBUG] SCHEDULING - Error getting customer ID from memory:`, error);
       }
     }
     
@@ -468,22 +464,13 @@ const directSchedulingTool = {
       // Import the scheduling tool directly
       const { createSchedulingEntry } = await import("../../tools/sanden/scheduling-tools");
       
-      // Get customer profile from memory if available
-      let customerProfile = null;
-      try {
-        customerProfile = await sharedMemory.get("customerProfile");
-        console.log(`🔍 [DEBUG] SCHEDULING - Retrieved customer profile:`, customerProfile);
-      } catch (error) {
-        console.log(`❌ [DEBUG] SCHEDULING - Error getting customer profile:`, error);
-      }
-      
       // Create scheduling data
       const schedulingData = {
         customerId: customerId,
-        companyName: customerProfile?.storeName || "顧客名不明",
-        email: customerProfile?.email || "customer@example.com",
-        phone: customerProfile?.phone || "000-0000-0000",
-        location: customerProfile?.location || "所在地不明",
+        companyName: sharedMemory.get("storeName", sessionId || "default") || "",
+        email: sharedMemory.get("email", sessionId || "default") || "",
+        phone: sharedMemory.get("phone", sessionId || "default") || "",
+        location: sharedMemory.get("location", sessionId || "default") || "",
         issueDescription: issueDescription || "修理予約の申し込み",
         scheduledDateTime: scheduledDateTime || new Date().toISOString(),
         priority: priority || "中",
@@ -513,26 +500,15 @@ const directSchedulingTool = {
   }
 };
 
-// Create a custom lookupCustomerFromDatabase tool that uses identifyCustomerWithFullDetails and stores customer ID in shared memory
+// Create a custom lookupCustomerFromDatabase tool that stores customer ID in shared memory
 const enhancedLookupCustomerFromDatabase = {
-  id: "lookupCustomerFromDatabase",
-  description: "Look up customer data using full details (company name, email, phone) and store in memory",
+  ...orchestratorTools.lookupCustomerFromDatabase,
   inputSchema: z.object({
-    companyName: z.string().optional().describe("Company name"),
-    email: z.string().optional().describe("Email address"),
-    phone: z.string().optional().describe("Phone number"),
-    allDetails: z.string().optional().describe("All details in one string"),
+    ...orchestratorTools.lookupCustomerFromDatabase.inputSchema.shape,
     sessionId: z.string().optional().describe("Session ID for memory access"),
   }),
-  outputSchema: z.object({
-    success: z.boolean(),
-    customerData: z.record(z.any()).optional(),
-    found: z.boolean(),
-    message: z.string().optional()
-  }),
   execute: async (args: any) => {
-    // Use the identifyCustomerWithFullDetails tool instead of the orchestrator tool
-    const result = await customerTools.identifyCustomerWithFullDetails.execute(args);
+    const result = await orchestratorTools.lookupCustomerFromDatabase.execute(args);
     
     // Get sessionId from agent memory
     let sessionId = "default";
@@ -547,44 +523,22 @@ const enhancedLookupCustomerFromDatabase = {
       console.log(`❌ [DEBUG] LOOKUP - Error getting sessionId from agent memory:`, error);
     }
     
-    // If customer was found, store the customer ID and profile in agent memory
+    // If customer was found, store the customer ID and profile in shared memory using sessionId
     if (result.found && result.customerData && result.customerData.customerId) {
       try {
         const customerData = result.customerData;
         
-        // Get sessionId from agent memory for proper memory identifiers
-        let sessionId = "default";
-        try {
-          const agentMemory = args.agent?.memory;
-          if (agentMemory && typeof agentMemory.get === 'function') {
-            sessionId = agentMemory.get("sessionId") || "default";
-          }
-        } catch (error) {
-          console.log(`❌ [DEBUG] Error getting sessionId from agent memory:`, error);
-        }
+        // Store individual fields in memory using sessionId
+        sharedMemory.set("customerId", customerData.customerId, sessionId);
+        sharedMemory.set("storeName", customerData.storeName, sessionId);
+        sharedMemory.set("email", customerData.email, sessionId);
+        sharedMemory.set("phone", customerData.phone, sessionId);
+        sharedMemory.set("location", customerData.location, sessionId);
+        sharedMemory.set("lastInteraction", new Date().toISOString(), sessionId);
+        sharedMemory.set("currentAgent", "customer-identification", sessionId);
+        sharedMemory.set("sessionStart", new Date().toISOString(), sessionId);
         
-        // Store customer data using proper memory identifiers
-        const memoryIds = { 
-          resource: sessionId, 
-          thread: "customer-conversation" 
-        };
-        
-        // Store customer data using proper session storage
-        try {
-          await sessionData.setCustomerData(sessionId, customerData);
-          await sessionData.setCustomerField(sessionId, "customerId", customerData.customerId);
-          console.log(`✅ [DEBUG] Successfully stored customer data for session: ${sessionId}`);
-        } catch (error) {
-          console.log(`❌ [DEBUG] Memory API error, using fallback storage:`, error);
-          // Fallback: store in agent memory directly
-          if (args.agent?.memory) {
-            args.agent.memory.set("customerId", customerData.customerId);
-            args.agent.memory.set("customerProfile", customerData);
-          }
-        }
-        
-        console.log(`🔍 [DEBUG] Stored customer profile in agent memory with IDs:`, {
-          memoryIds,
+        console.log(`🔍 [DEBUG] Stored complete customer profile in shared memory (session: ${sessionId}):`, {
           customerId: customerData.customerId,
           storeName: customerData.storeName,
           email: customerData.email,
@@ -592,7 +546,7 @@ const enhancedLookupCustomerFromDatabase = {
           location: customerData.location
         });
       } catch (error) {
-        console.log(`❌ [DEBUG] Failed to store customer profile in agent memory:`, error);
+        console.log(`❌ [DEBUG] Failed to store customer profile in shared memory:`, error);
       }
     }
     
@@ -614,7 +568,7 @@ export const routingAgentCustomerIdentification = new Agent({
     directProductLookup: directProductLookupTool,
     directScheduling: directSchedulingTool,
   },
-  memory: sharedMemory, // Use proper Mastra Memory instance
+  memory: sharedMemory, // Use shared memory
 });
 
 console.log("✅ Customer Identification Agent created with instructions length:", CUSTOMER_IDENTIFICATION_INSTRUCTIONS.length);

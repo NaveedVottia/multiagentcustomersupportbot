@@ -1,6 +1,6 @@
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
-import { sharedMemory } from "../../agents/sanden/customer-identification";
+import { sharedMemory } from "../../lib/shared-memory";
 
 // Working memory template for customer profiles
 const WORKING_MEMORY_TEMPLATE = `# Customer Profile
@@ -14,27 +14,35 @@ const WORKING_MEMORY_TEMPLATE = `# Customer Profile
 - **Session Start**: {{sessionStart}}`;
 
 // Helper function to get formatted customer profile from memory
-const getCustomerProfile = () => {
+const getCustomerProfile = async (sessionId: string = "default") => {
   try {
-    const customerId = sharedMemory.get("customerId");
-    const storeName = sharedMemory.get("storeName");
-    const email = sharedMemory.get("email");
-    const phone = sharedMemory.get("phone");
-    const location = sharedMemory.get("location");
-    const lastInteraction = sharedMemory.get("lastInteraction");
-    const currentAgent = sharedMemory.get("currentAgent");
-    const sessionStart = sharedMemory.get("sessionStart");
-    
-    if (customerId) {
-      return WORKING_MEMORY_TEMPLATE
-        .replace("{{customerId}}", customerId || "N/A")
-        .replace("{{storeName}}", storeName || "N/A")
-        .replace("{{email}}", email || "N/A")
-        .replace("{{phone}}", phone || "N/A")
-        .replace("{{location}}", location || "N/A")
-        .replace("{{lastInteraction}}", lastInteraction || "N/A")
-        .replace("{{currentAgent}}", currentAgent || "N/A")
-        .replace("{{sessionStart}}", sessionStart || "N/A");
+    const threadId = `customer-session-${sessionId}`
+    const result = await sharedMemory.getWorkingMemory({
+      threadId,
+      resourceId: sessionId
+    });
+
+    if (result) {
+      const customerId = result.customerId;
+      const storeName = result.storeName;
+      const email = result.email;
+      const phone = result.phone;
+      const location = result.location;
+      const lastInteraction = result.lastInteraction;
+      const currentAgent = result.currentAgent;
+      const sessionStart = result.sessionStart;
+
+      if (customerId) {
+        return WORKING_MEMORY_TEMPLATE
+          .replace("{{customerId}}", customerId || "N/A")
+          .replace("{{storeName}}", storeName || "N/A")
+          .replace("{{email}}", email || "N/A")
+          .replace("{{phone}}", phone || "N/A")
+          .replace("{{location}}", location || "N/A")
+          .replace("{{lastInteraction}}", lastInteraction || "N/A")
+          .replace("{{currentAgent}}", currentAgent || "N/A")
+          .replace("{{sessionStart}}", sessionStart || "N/A");
+      }
     }
     return null;
   } catch (error) {
@@ -47,18 +55,27 @@ const getCustomerProfile = () => {
 export const getCustomerProfileTool = createTool({
   id: "getCustomerProfile",
   description: "Get the current customer profile from shared memory",
-  inputSchema: z.object({}),
+  inputSchema: z.object({
+    sessionId: z.string().optional().describe("Session ID for memory access"),
+  }),
   outputSchema: z.object({
     success: z.boolean(),
     profile: z.string().optional(),
     customerId: z.string().optional(),
     hasProfile: z.boolean(),
   }),
-  execute: async () => {
+  execute: async ({ input }: { input?: any }) => {
     try {
-      const profile = getCustomerProfile();
-      const customerId = sharedMemory.get("customerId");
-      
+      const sessionId = input?.sessionId || "default";
+      const profile = await getCustomerProfile(sessionId);
+
+      const threadId = `customer-session-${sessionId}`
+      const result = await sharedMemory.getWorkingMemory({
+        threadId,
+        resourceId: sessionId
+      });
+      const customerId = result?.customerId;
+
       if (profile && customerId) {
         console.log(`🔍 [DEBUG] Retrieved customer profile for ${customerId}`);
         return {
@@ -89,6 +106,7 @@ export const updateCurrentAgentTool = createTool({
   description: "Update the current agent in shared memory",
   inputSchema: z.object({
     agentName: z.string().describe("Name of the current agent"),
+    sessionId: z.string().optional().describe("Session ID for memory access"),
   }),
   outputSchema: z.object({
     success: z.boolean(),
@@ -96,10 +114,19 @@ export const updateCurrentAgentTool = createTool({
   }),
   execute: async ({ input }: { input: any }) => {
     try {
-      const { agentName } = input;
-      sharedMemory.set("currentAgent", agentName);
-      sharedMemory.set("lastInteraction", new Date().toISOString());
-      
+      const { agentName, sessionId = "default" } = input;
+      const threadId = `customer-session-${sessionId}`
+
+      // Update current agent in working memory
+      await sharedMemory.updateWorkingMemory({
+        threadId,
+        resourceId: sessionId,
+        workingMemory: {
+          currentAgent: agentName,
+          lastInteraction: new Date().toISOString()
+        }
+      });
+
       console.log(`🔍 [DEBUG] Updated current agent to: ${agentName}`);
       return {
         success: true,
@@ -118,28 +145,29 @@ export const updateCurrentAgentTool = createTool({
 export const clearCustomerMemoryTool = createTool({
   id: "clearCustomerMemory",
   description: "Clear all customer data from shared memory",
-  inputSchema: z.object({}),
+  inputSchema: z.object({
+    sessionId: z.string().optional().describe("Session ID for memory access"),
+  }),
   outputSchema: z.object({
     success: z.boolean(),
     message: z.string(),
   }),
-  execute: async () => {
+  execute: async ({ input }: { input?: any }) => {
     try {
-      // Clear all customer-related memory keys
-      const keysToClear = [
-        "customerId", "storeName", "email", "phone", "location",
-        "lastInteraction", "currentAgent", "sessionStart"
-      ];
-      
-      keysToClear.forEach(key => {
-        try {
-          sharedMemory.set(key, null);
-        } catch (error) {
-          console.log(`❌ [DEBUG] Failed to clear key ${key}:`, error);
+      const sessionId = input?.sessionId || "default";
+      const threadId = `customer-session-${sessionId}`
+
+      // Clear working memory by setting it to null/empty
+      await sharedMemory.updateWorkingMemory({
+        threadId,
+        resourceId: sessionId,
+        workingMemory: {
+          cleared: true,
+          clearedAt: new Date().toISOString()
         }
       });
-      
-      console.log(`🔍 [DEBUG] Cleared all customer data from memory`);
+
+      console.log(`🔍 [DEBUG] Cleared all customer data from memory for session ${sessionId}`);
       return {
         success: true,
         message: "Customer memory cleared successfully",
