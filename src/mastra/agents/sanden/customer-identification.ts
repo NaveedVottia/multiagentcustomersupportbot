@@ -12,11 +12,8 @@ import dotenv from "dotenv";
 // Load environment variables
 dotenv.config({ path: "./server.env" });
 
-// Instructions will be loaded from Langfuse only - no hardcoded fallback
-let CUSTOMER_IDENTIFICATION_INSTRUCTIONS = "";
-
-// Load Langfuse prompt asynchronously
-async function loadLangfusePrompt() {
+// Load Langfuse prompt function (same pattern as other agents)
+async function loadLangfusePrompt(promptName: string, options: any = {}) {
   try {
     const langfuse = new Langfuse({
       publicKey: process.env.LANGFUSE_PUBLIC_KEY,
@@ -24,27 +21,23 @@ async function loadLangfusePrompt() {
       baseUrl: process.env.LANGFUSE_HOST,
     });
     
-    const promptClient = await langfuse.getPrompt("customer-identification", undefined, { cacheTtlSeconds:0 });
+    const promptClient = await langfuse.getPrompt(promptName, undefined, options);
     if (promptClient?.prompt?.trim()) {
-      CUSTOMER_IDENTIFICATION_INSTRUCTIONS = promptClient.prompt.trim();
-      console.log(`[Langfuse] ✅ Loaded customer-identification prompt via SDK (v${promptClient.version})`);
+      console.log(`[Langfuse] ✅ Loaded ${promptName} prompt via SDK (v${promptClient.version})`);
+      return promptClient.prompt.trim();
     }
+    return "";
   } catch (error) {
-    console.error("[Langfuse] Failed to load customer-identification prompt:", error);
-    console.error("[Langfuse] No fallback prompt - agent will have empty instructions");
+    console.error(`[Langfuse] Failed to load ${promptName} prompt:`, error);
+    return "";
   }
 }
 
-// Load the prompt asynchronously
-await loadLangfusePrompt();
-
 // Debug logging
-console.log("🔍 Customer Identification Agent Instructions:");
-console.log("📝 Langfuse Instructions Length:", CUSTOMER_IDENTIFICATION_INSTRUCTIONS.length);
-console.log("📝 Using Langfuse:", CUSTOMER_IDENTIFICATION_INSTRUCTIONS ? "YES" : "NO (empty)");
-if (CUSTOMER_IDENTIFICATION_INSTRUCTIONS) {
-  console.log("📝 Instructions Preview:", CUSTOMER_IDENTIFICATION_INSTRUCTIONS.substring(0, 200) + "...");
-}
+console.log("🔍 Customer Identification Agent Configuration:");
+console.log("📝 Langfuse Prompt Loading: ✅ Enabled");
+console.log("📝 Model Temperature: 0.1 (deterministic)");
+console.log("📝 Max Tokens: 1000");
 
 // Session-aware shared memory that can work with server session management
 const createSessionAwareMemory = (sessionId: string) => {
@@ -228,11 +221,15 @@ const enhancedLookupCustomerFromDatabase = {
   }
 };
 
+// Create agent with empty instructions (will be loaded from Langfuse)
 export const routingAgentCustomerIdentification = new Agent({ 
   name: "customer-identification",
   description: "サンデン・リテールシステム修理受付AI , 顧客識別エージェント",
-  instructions: CUSTOMER_IDENTIFICATION_INSTRUCTIONS,
-  model: bedrock("anthropic.claude-3-5-sonnet-20240620-v1:0"),
+  instructions: "", // Will be loaded from Langfuse
+  model: bedrock("anthropic.claude-3-5-sonnet-20240620-v1:0", {
+    temperature: 0.1, // Lower temperature for more deterministic behavior
+    maxTokens: 1000,
+  }),
   tools: {
     ...customerTools,
     ...commonTools,
@@ -243,7 +240,21 @@ export const routingAgentCustomerIdentification = new Agent({
   memory: sharedMemory, // Use shared memory
 });
 
-console.log("✅ Customer Identification Agent created with instructions length:", CUSTOMER_IDENTIFICATION_INSTRUCTIONS.length);
+// Bind prompt from Langfuse
+(async () => {
+  try {
+    const instructions = await loadLangfusePrompt("customer-identification", { cacheTtlMs: 0 , label: "production" });
+    if (instructions) {
+      // Use the correct method to update instructions
+      (routingAgentCustomerIdentification as any).__updateInstructions(instructions);
+      console.log(`[Langfuse] ✅ Loaded prompt via SDK: customer-identification`);
+    }
+  } catch (error) {
+    console.error("[Langfuse] Failed to load customer-identification prompt:", error);
+  }
+})();
+
+console.log("✅ Customer Identification Agent created with Langfuse prompt loading");
 
 // Export the shared memory instance for use in other agents
 export { sharedMemory };
