@@ -1,7 +1,7 @@
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
-import { zapierMcp } from "../../../integrations/zapier-mcp";
-import { sharedMastraMemory } from "../../shared-memory";
+import { zapierMcp } from "../../../integrations/zapier-mcp.js";
+import { sharedMastraMemory } from "../../shared-memory.js";
 
 export const searchProductsTool = createTool({
   id: "searchProducts",
@@ -13,7 +13,7 @@ export const searchProductsTool = createTool({
   }),
   outputSchema: z.object({
     success: z.boolean(),
-    data: z.any(),
+    data: z.record(z.string(), z.unknown()),
     message: z.string(),
   }),
   execute: async ({ context }: { context: any }) => {
@@ -45,7 +45,7 @@ export const getProductsByCustomerIdTool = createTool({
   }),
   outputSchema: z.object({
     success: z.boolean(),
-    data: z.any(),
+    data: z.record(z.string(), z.unknown()),
     message: z.string(),
   }),
   execute: async ({ context }: { context: any }) => {
@@ -87,7 +87,7 @@ export const hybridGetProductsByCustomerIdTool = createTool({
   }),
   outputSchema: z.object({
     success: z.boolean(),
-    data: z.any(),
+    data: z.record(z.string(), z.unknown()),
     message: z.string(),
   }),
   execute: async ({ context }: { context: any }) => {
@@ -209,7 +209,7 @@ export const checkWarrantyStatusTool = createTool({
   }),
   outputSchema: z.object({
     success: z.boolean(),
-    data: z.any(),
+    data: z.record(z.string(), z.unknown()),
     message: z.string(),
   }),
   execute: async ({ context }: { context: any }) => {
@@ -240,7 +240,7 @@ export const getStandardRepairFeesTool = createTool({
   }),
   outputSchema: z.object({
     success: z.boolean(),
-    data: z.any(),
+    data: z.record(z.string(), z.unknown()),
     message: z.string(),
   }),
   execute: async ({ context }: { context: any }) => {
@@ -270,7 +270,7 @@ export const searchRepairLogsTool = createTool({
   }),
   outputSchema: z.object({
     success: z.boolean(),
-    data: z.any(),
+    data: z.record(z.string(), z.unknown()),
     message: z.string(),
   }),
   execute: async ({ context }: { context: any }) => {
@@ -305,7 +305,7 @@ export const createProductTool = createTool({
   }),
   outputSchema: z.object({
     success: z.boolean(),
-    data: z.any(),
+    data: z.record(z.string(), z.unknown()),
     message: z.string(),
   }),
   execute: async ({ context }: { context: any }) => {
@@ -348,7 +348,7 @@ export const updateProductTool = createTool({
   }),
   outputSchema: z.object({
     success: z.boolean(),
-    data: z.any(),
+    data: z.record(z.string(), z.unknown()),
     message: z.string(),
   }),
   execute: async ({ context }: { context: any }) => {

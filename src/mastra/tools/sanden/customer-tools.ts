@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { createTool } from "@mastra/core/tools";
-import { zapierMcp } from "../../../integrations/zapier-mcp";
+import { zapierMcp } from "../../../integrations/zapier-mcp.js";
 
 // Import types and functions from orchestrator-tools
 type ToolExecuteArgs = { input?: any; context?: any; writer?: any; mastra?: any };
@@ -391,7 +391,7 @@ export const identifyCustomerWithFullDetails = createTool({
   }),
   outputSchema: z.object({ 
     success: z.boolean(), 
-    customerData: z.record(z.any()).optional(), 
+    customerData: z.record(z.string(), z.unknown()).optional(), 
     found: z.boolean(),
     message: z.string().optional()
   }),
@@ -863,7 +863,7 @@ export const customerTools = {
       action: z.string().describe("Action performed"),
       sessionId: z.string().describe("Session ID"),
       customerId: z.string().optional().describe("Customer ID if applicable"),
-      details: z.record(z.any()).optional().describe("Additional details"),
+      details: z.record(z.string(), z.unknown()).optional().describe("Additional details"),
     }),
     execute: async ({ context }: { context: any }) => {
       const { action, sessionId, customerId, details } = context;
@@ -913,7 +913,7 @@ export const customerTools = {
         .describe("Escalation priority"),
       sessionId: z.string().describe("Session ID"),
       customerId: z.string().optional().describe("Customer ID if available"),
-      context: z.record(z.any()).optional().describe("Context information"),
+      context: z.record(z.string(), z.unknown()).optional().describe("Context information"),
     }),
     execute: async ({ context }: { context: any }) => {
       const {

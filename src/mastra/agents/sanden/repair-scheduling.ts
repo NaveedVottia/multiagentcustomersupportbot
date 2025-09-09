@@ -4,14 +4,14 @@ import { bedrock } from "@ai-sdk/amazon-bedrock";
 import { schedulingTools } from "../../tools/sanden/scheduling-tools.js";
 import { customerTools } from "../../tools/sanden/customer-tools.js";
 import { productTools } from "../../tools/sanden/product-tools.js";
-import { commonTools } from "../../tools/sanden/common-tools";
-import { memoryTools } from "../../tools/sanden/memory-tools";
-import { orchestratorTools } from "../../tools/sanden/orchestrator-tools";
+import { commonTools } from "../../tools/sanden/common-tools.js";
+import { memoryTools } from "../../tools/sanden/memory-tools.js";
+import { orchestratorTools } from "../../tools/sanden/orchestrator-tools.js";
 import { Langfuse } from "langfuse";
 import dotenv from "dotenv";
 import path from "path";
 import { fileURLToPath } from "url";
-import { sharedMastraMemory } from "../../shared-memory";
+import { sharedMastraMemory } from "../../shared-memory.js";
 
 // Load environment variables with absolute path
 const __filename = fileURLToPath(import.meta.url);

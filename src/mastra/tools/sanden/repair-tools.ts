@@ -1,7 +1,7 @@
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
-import { zapierMcp } from "../../../integrations/zapier-mcp";
-import { sharedMastraMemory } from "../../shared-memory";
+import { zapierMcp } from "../../../integrations/zapier-mcp.js";
+import { sharedMastraMemory } from "../../shared-memory.js";
 
 export const createRepairTool = createTool({
   id: "createRepair",
@@ -18,7 +18,7 @@ export const createRepairTool = createTool({
   }),
   outputSchema: z.object({
     success: z.boolean(),
-    data: z.any(),
+    data: z.record(z.string(), z.unknown()),
     message: z.string(),
   }),
   execute: async ({ context }: { context: any }) => {
@@ -69,7 +69,7 @@ export const updateRepairTool = createTool({
   }),
   outputSchema: z.object({
     success: z.boolean(),
-    data: z.any(),
+    data: z.record(z.string(), z.unknown()),
     message: z.string(),
   }),
   execute: async ({ context }: { context: any }) => {
@@ -107,7 +107,7 @@ export const getRepairStatusTool = createTool({
   }),
   outputSchema: z.object({
     success: z.boolean(),
-    data: z.any(),
+    data: z.record(z.string(), z.unknown()),
     message: z.string(),
   }),
   execute: async ({ context }: { context: any }) => {
@@ -145,7 +145,7 @@ export const hybridGetRepairsByCustomerIdTool = createTool({
   }),
   outputSchema: z.object({
     success: z.boolean(),
-    data: z.any(),
+    data: z.record(z.string(), z.unknown()),
     message: z.string(),
   }),
   execute: async ({ context }: { context: any }) => {

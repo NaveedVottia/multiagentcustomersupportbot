@@ -1,7 +1,7 @@
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
-import { zapierMcp } from "../../../integrations/zapier-mcp";
-import { sharedMastraMemory } from "../../shared-memory";
+import { zapierMcp } from "../../../integrations/zapier-mcp.js";
+import { sharedMastraMemory } from "../../shared-memory.js";
 
 export const createSchedulingEntry = createTool({
   id: "google_sheets_create_spreadsheet_row",
@@ -28,7 +28,7 @@ export const createSchedulingEntry = createTool({
   }),
   outputSchema: z.object({
     success: z.boolean(),
-    data: z.any(),
+    data: z.record(z.string(), z.unknown()),
     message: z.string(),
   }),
   execute: async ({ context }: { context: any }) => {
@@ -170,7 +170,7 @@ export const googleSheetsCreateRow = createTool({
   }),
   outputSchema: z.object({
     success: z.boolean(),
-    data: z.any(),
+    data: z.record(z.string(), z.unknown()),
     message: z.string(),
   }),
   execute: async ({ context }: { context: any }) => {
@@ -249,7 +249,7 @@ export const googleSheetsUpdateRow = createTool({
   }),
   outputSchema: z.object({
     success: z.boolean(),
-    data: z.any(),
+    data: z.record(z.string(), z.unknown()),
     message: z.string(),
   }),
   execute: async ({ context }: { context: any }) => {
@@ -283,7 +283,7 @@ export const googleCalendarAddEvent = createTool({
   }),
   outputSchema: z.object({
     success: z.boolean(),
-    data: z.any(),
+    data: z.record(z.string(), z.unknown()),
     message: z.string(),
   }),
   execute: async ({ context }: { context: any }) => {

@@ -262,9 +262,9 @@ app.post("/api/agents/customer-identification/test", async (req: Request, res: R
     console.log("🔍 Agent type:", typeof resolvedAgent);
     
     // Try to execute without streaming
-    if (typeof resolvedAgent.stream === 'function') {
-      console.log("🔍 Testing stream method...");
-      const stream = await resolvedAgent.stream(messages);
+    if (typeof resolvedAgent.streamLegacy === 'function') {
+      console.log("🔍 Testing streamLegacy method...");
+      const stream = await resolvedAgent.streamLegacy(messages);
       console.log("🔍 Stream created, trying to read...");
       
       // Try to read from the stream
@@ -391,8 +391,23 @@ app.post("/api/agents/customer-identification/stream", async (req: Request, res:
     let stream;
     let result;
 
-    // First try stream method with error handling
-    if (typeof resolvedAgent.stream === 'function') {
+    // First try streamLegacy method with error handling
+    if (typeof resolvedAgent.streamLegacy === 'function') {
+      try {
+        console.log("🔍 Trying streamLegacy method...");
+        stream = await resolvedAgent.streamLegacy(normalizedMessages, {
+          resourceId: resourceId,
+          threadId: threadId
+        });
+        console.log("✅ StreamLegacy method succeeded");
+      } catch (streamError) {
+        console.log("⚠️ StreamLegacy method failed:", streamError instanceof Error ? streamError.message : String(streamError));
+        stream = null; // Reset stream to null so we try fallbacks
+      }
+    }
+    
+    // If streamLegacy failed, try stream method
+    if (!stream && typeof resolvedAgent.stream === 'function') {
       try {
         console.log("🔍 Trying stream method...");
         stream = await resolvedAgent.stream(normalizedMessages, {
@@ -557,8 +572,23 @@ app.post("/api/agents/repair-workflow-orchestrator/stream", async (req: Request,
     let stream;
     let result;
 
-    // First try stream method with error handling
-    if (typeof resolvedAgent.stream === 'function') {
+    // First try streamLegacy method with error handling
+    if (typeof resolvedAgent.streamLegacy === 'function') {
+      try {
+        console.log("🔍 Trying streamLegacy method...");
+        stream = await resolvedAgent.streamLegacy(normalizedMessages, {
+          resourceId: resourceId,
+          threadId: threadId
+        });
+        console.log("✅ StreamLegacy method succeeded");
+      } catch (streamError) {
+        console.log("⚠️ StreamLegacy method failed:", streamError instanceof Error ? streamError.message : String(streamError));
+        stream = null;
+      }
+    }
+    
+    // If streamLegacy failed, try stream method
+    if (!stream && typeof resolvedAgent.stream === 'function') {
       try {
         console.log("🔍 Trying stream method...");
         stream = await resolvedAgent.stream(normalizedMessages, {
@@ -687,9 +717,9 @@ app.post("/api/agents/orchestrator/stream", async (req: Request, res: Response) 
     // Start keepalive before model call
     const keepaliveTimer = startKeepalive(res);
 
-    // Execute the agent using Mastra's stream method
+    // Execute the agent using Mastra's streamLegacy method
     const resolvedAgent = await agent;
-    const stream = await resolvedAgent.stream(normalizedMessages);
+    const stream = await resolvedAgent.streamLegacy(normalizedMessages);
     
     // Message id already sent early
     
@@ -727,9 +757,9 @@ app.post("/api/agents/repair-agent/stream", async (req: Request, res: Response) 
     writeMessageId(res, earlyMessageId);
     res.write(`0:""\n`);
 
-    // Execute the agent using Mastra's stream method
+    // Execute the agent using Mastra's streamLegacy method
     const resolvedAgent = await agent; // Resolve the agent promise first
-    const stream = await resolvedAgent.stream(messages);
+    const stream = await resolvedAgent.streamLegacy(messages);
     
     // Message id already sent early
     
@@ -761,9 +791,9 @@ app.post("/api/agents/repair-history-ticket/stream", async (req: Request, res: R
     // Set headers for streaming response
     prepareStreamHeaders(res);
 
-    // Execute the agent using Mastra's stream method
+    // Execute the agent using Mastra's streamLegacy method
     const resolvedAgent = await agent; // Resolve the agent promise first
-    const stream = await resolvedAgent.stream(messages);
+    const stream = await resolvedAgent.streamLegacy(messages);
     
     // Generate a unique message ID
     const messageId = `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
@@ -808,9 +838,9 @@ app.post("/api/agents/repair-scheduling/stream", async (req: Request, res: Respo
       customerId: session.customerId
     };
 
-    // Execute the agent using Mastra's stream method
+    // Execute the agent using Mastra's streamLegacy method
     const resolvedAgent = await agent; // Resolve the agent promise first
-    const stream = await resolvedAgent.stream(messages);
+    const stream = await resolvedAgent.streamLegacy(messages);
     
     // Generate a unique message ID
     const messageId = `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;

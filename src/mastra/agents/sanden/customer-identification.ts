@@ -76,7 +76,7 @@ const directRepairHistoryTool = {
   }),
   outputSchema: z.object({
     success: z.boolean(),
-    data: z.any(),
+    data: z.record(z.string(), z.unknown()),
     message: z.string(),
   }),
   execute: async (args: any) => {
@@ -155,28 +155,22 @@ const enhancedLookupCustomerFromDatabase = {
 export const routingAgentCustomerIdentification = new Agent({ 
   name: "customer-identification",
   description: "サンデン・リテールシステム修理受付AI , 顧客識別エージェント",
-  instructions: prompt,
-  model: bedrock("anthropic.claude-3-5-sonnet-20240620-v1:0", {
-    temperature: 0.1, // Lower temperature for more deterministic behavior
+  instructions: "あなたは修理サービスアシスタントです。こんにちは！何かお手伝いできることはありますか？",
+  model: bedrock("anthropic.claude-3-sonnet-20240229-v1:0", {
+    temperature: 0.1,
     maxTokens: 1000,
   }),
-  tools: {
-    ...customerTools,
-    ...commonTools,
-    delegateTo: enhancedDelegateTo,
-    lookupCustomerFromDatabase: enhancedLookupCustomerFromDatabase,
-    directRepairHistory: directRepairHistoryTool,
-  },
-  memory: sharedMastraMemory, // Use shared memory
+  // Completely disable tools and memory to test basic functionality
 });
 
 // Debug: Log available tools
 console.log("🔍 [DEBUG] Customer Identification Agent Tools:", Object.keys({
-  ...customerTools,
-  ...commonTools,
-  delegateTo: enhancedDelegateTo,
-  lookupCustomerFromDatabase: enhancedLookupCustomerFromDatabase,
-  directRepairHistory: directRepairHistoryTool,
+  // Temporarily no tools to test basic functionality
+  // ...customerTools,
+  // ...commonTools,
+  // delegateTo: enhancedDelegateTo,
+  // lookupCustomerFromDatabase: enhancedLookupCustomerFromDatabase,
+  // directRepairHistory: directRepairHistoryTool,
 }));
 
 console.log("✅ Customer Identification Agent created with Langfuse prompt loading");

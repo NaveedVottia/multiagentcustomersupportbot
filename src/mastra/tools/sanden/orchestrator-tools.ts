@@ -1,7 +1,7 @@
 import { createTool } from "@mastra/core/tools";
-import { langfuse } from "../../../integrations/langfuse";
+import { langfuse } from "../../../integrations/langfuse.js";
 import { z } from "zod";
-import { zapierMcp } from "../../../integrations/zapier-mcp";
+import { zapierMcp } from "../../../integrations/zapier-mcp.js";
 
 let mastraInstance: any;
 
@@ -52,8 +52,8 @@ export const delegateTo = createTool({
   id: "delegateTo",
   description: "Delegates to another agent and pipes their stream back",
   // Accept both strict and loose calls; default to customer-identification
-  inputSchema: z.object({ agentId: z.string().optional(), message: z.string().optional(), context: z.record(z.any()).optional() }),
-  outputSchema: z.object({ ok: z.boolean(), agentId: z.string(), extractedData: z.any().optional() }),
+  inputSchema: z.object({ agentId: z.string().optional(), message: z.string().optional(), context: z.record(z.string(), z.unknown()).optional() }),
+  outputSchema: z.object({ ok: z.boolean(), agentId: z.string(), extractedData: z.record(z.string(), z.unknown()).optional() }),
   async execute(args: ToolExecuteArgs) {
     const { writer, mastra } = args as any;
     const parsed = getArgs(args) as { agentId?: string; message?: string; context?: Record<string, any> };
@@ -137,8 +137,8 @@ export const delegateTo = createTool({
 export const forceDelegation = createTool({
   id: "forceDelegation",
   description: "Force delegation to another agent (alias for delegateTo)",
-  inputSchema: z.object({ agentId: z.string().optional(), message: z.string().optional(), context: z.record(z.any()).optional() }),
-  outputSchema: z.object({ ok: z.boolean(), agentId: z.string(), extractedData: z.any().optional() }),
+  inputSchema: z.object({ agentId: z.string().optional(), message: z.string().optional(), context: z.record(z.string(), z.unknown()).optional() }),
+  outputSchema: z.object({ ok: z.boolean(), agentId: z.string(), extractedData: z.record(z.string(), z.unknown()).optional() }),
   async execute(args: ToolExecuteArgs) {
     console.log("🔧 forceDelegation tool called with args:", JSON.stringify(args, null, 2));
     
@@ -159,7 +159,7 @@ export const forceDelegation = createTool({
 export const escalateToHuman = createTool({
   id: "escalateToHuman",
   description: "Escalate to human support for emergency or complex issues",
-  inputSchema: z.object({ reason: z.string(), priority: z.enum(["Low", "Medium", "High", "Emergency"]), context: z.record(z.any()).optional() }),
+  inputSchema: z.object({ reason: z.string(), priority: z.enum(["Low", "Medium", "High", "Emergency"]), context: z.record(z.string(), z.unknown()).optional() }),
   outputSchema: z.object({ success: z.boolean(), escalationId: z.string().optional(), message: z.string().optional() }),
   async execute(args: ToolExecuteArgs) {
     const { reason, priority, context } = getArgs(args) as { reason: string; priority: "Low"|"Medium"|"High"|"Emergency"; context?: any };
@@ -196,7 +196,7 @@ export const escalateToHuman = createTool({
 export const validateContext = createTool({
   id: "validateContext",
   description: "Validate workflow context structure",
-  inputSchema: z.object({ context: z.record(z.any()), requiredFields: z.array(z.string()).optional(), schema: z.string().optional() }),
+  inputSchema: z.object({ context: z.record(z.string(), z.unknown()), requiredFields: z.array(z.string()).optional(), schema: z.string().optional() }),
   outputSchema: z.object({ isValid: z.boolean(), missingFields: z.array(z.string()), message: z.string() }),
   async execute(args: ToolExecuteArgs) {
     const { context, requiredFields, schema } = getArgs(args) as { context: any; requiredFields?: string[]; schema?: string };
@@ -219,8 +219,8 @@ export const validateContext = createTool({
 export const updateWorkflowState = createTool({
   id: "updateWorkflowState",
   description: "Update workflow state with new data",
-  inputSchema: z.object({ currentState: z.record(z.any()).optional(), updates: z.record(z.any()).optional(), newState: z.record(z.any()).optional() }),
-  outputSchema: z.object({ success: z.boolean(), newState: z.record(z.any()) }),
+  inputSchema: z.object({ currentState: z.record(z.string(), z.unknown()).optional(), updates: z.record(z.string(), z.unknown()).optional(), newState: z.record(z.string(), z.unknown()).optional() }),
+  outputSchema: z.object({ success: z.boolean(), newState: z.record(z.string(), z.unknown()) }),
   async execute(args: ToolExecuteArgs) {
     const payload = getArgs(args) as { currentState?: any; updates?: any; newState?: any };
     const traceId = await langfuse.startTrace("tool.updateWorkflowState");
@@ -236,7 +236,7 @@ export const lookupCustomerFromDatabase = createTool({
   id: "lookupCustomerFromDatabase",
   description: "Look up real customer data from the database using store name or other identifiers",
   inputSchema: z.object({ storeName: z.string(), searchType: z.enum(["store_name", "customer_id", "phone", "email"]).optional() }),
-  outputSchema: z.object({ success: z.boolean(), customerData: z.record(z.any()).optional(), found: z.boolean() }),
+  outputSchema: z.object({ success: z.boolean(), customerData: z.record(z.string(), z.unknown()).optional(), found: z.boolean() }),
   async execute(args: ToolExecuteArgs) {
     const { storeName, searchType = "store_name" } = getArgs(args) as { storeName: string; searchType?: string };
     const traceId = await langfuse.startTrace("tool.lookupCustomerFromDatabase");
@@ -358,7 +358,7 @@ export const lookupCustomerFromDatabase = createTool({
 export const logCustomerData = createTool({
   id: "logCustomerData",
   description: "Automatically log extracted customer data to Google Sheets via Zapier MCP",
-  inputSchema: z.object({ customerData: z.record(z.any()), source: z.string().optional() }),
+  inputSchema: z.object({ customerData: z.record(z.string(), z.unknown()), source: z.string().optional() }),
   outputSchema: z.object({ success: z.boolean(), logId: z.string().optional() }),
   async execute(args: ToolExecuteArgs) {
     const { customerData, source } = getArgs(args) as { customerData: any; source?: string };

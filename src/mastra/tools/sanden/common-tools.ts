@@ -1,6 +1,6 @@
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
-import { zapierMcp } from "../../../integrations/zapier-mcp";
+import { zapierMcp } from "../../../integrations/zapier-mcp.js";
 
 export const validateSession = createTool({
   id: "validateSession",
@@ -10,10 +10,10 @@ export const validateSession = createTool({
   }),
   outputSchema: z.object({
     success: z.boolean(),
-    data: z.any(),
+    data: z.record(z.string(), z.unknown()),
     message: z.string(),
   }),
-  execute: async ({ context }: { context: any }) => {
+  execute: async ({ context }: { context: { sessionId: string } }) => {
     const { sessionId } = context;
 
     try {
@@ -22,17 +22,18 @@ export const validateSession = createTool({
         instructions: "validate session connectivity",
         a1_range: "A1:I1",
       });
-      const result = { data: { sessionId } } as any;
+      const result = { data: { sessionId } };
       return {
         success: true,
-        data: result.data || result,
-        message: result.message || "Session validated successfully",
+        data: result.data,
+        message: "Session validated successfully",
       };
-    } catch (error: any) {
-      return { 
-        success: false, 
-        data: null, 
-        message: `Session validation failed: ${error.message}` 
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      return {
+        success: false,
+        data: null,
+        message: `Session validation failed: ${errorMessage}`
       };
     }
   },
@@ -46,10 +47,10 @@ export const getSystemInfo = createTool({
   }),
   outputSchema: z.object({
     success: z.boolean(),
-    data: z.any(),
+    data: z.record(z.string(), z.unknown()),
     message: z.string(),
   }),
-  execute: async ({ context }: { context: any }) => {
+  execute: async ({ context }: { context: { sessionId: string } }) => {
     const { sessionId } = context;
 
     try {
@@ -57,17 +58,18 @@ export const getSystemInfo = createTool({
         instructions: "system info headers",
         a1_range: "A1:I1",
       });
-      const result = { data: { headers } } as any;
+      const result = { data: { headers } };
       return {
         success: true,
-        data: result.data || result,
-        message: result.message || "System info retrieved successfully",
+        data: result.data,
+        message: "System info retrieved successfully",
       };
-    } catch (error: any) {
-      return { 
-        success: false, 
-        data: null, 
-        message: `Failed to get system info: ${error.message}` 
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      return {
+        success: false,
+        data: null,
+        message: `Failed to get system info: ${errorMessage}`
       };
     }
   },
@@ -82,24 +84,25 @@ export const getHelp = createTool({
   }),
   outputSchema: z.object({
     success: z.boolean(),
-    data: z.any(),
+    data: z.record(z.string(), z.unknown()),
     message: z.string(),
   }),
-  execute: async ({ context }: { context: any }) => {
+  execute: async ({ context }: { context: { sessionId: string; topic?: string } }) => {
     const { sessionId, topic } = context;
 
     try {
-      const result = { data: { topic: topic || "" } } as any;
+      const result = { data: { topic: topic || "" } };
       return {
         success: true,
-        data: result.data || result,
-        message: result.message || "Help information retrieved successfully",
+        data: result.data,
+        message: "Help information retrieved successfully",
       };
-    } catch (error: any) {
-      return { 
-        success: false, 
-        data: null, 
-        message: `Failed to get help: ${error.message}` 
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      return {
+        success: false,
+        data: null,
+        message: `Failed to get help: ${errorMessage}`
       };
     }
   },
@@ -111,14 +114,14 @@ export const zapierAiQuery = createTool({
   inputSchema: z.object({
     url: z.string().url().optional().describe("Optional URL to extract from. If omitted, uses the configured source."),
     prompt: z.string().describe("Instruction or question for the AI extractor/summarizer"),
-    context: z.record(z.any()).optional().describe("Optional JSON context to include"),
+    context: z.record(z.string(), z.unknown()).optional().describe("Optional JSON context to include"),
   }),
   outputSchema: z.object({
     success: z.boolean(),
-    data: z.any(),
+    data: z.record(z.string(), z.unknown()),
     message: z.string(),
   }),
-  execute: async ({ context }: { context: any }) => {
+  execute: async ({ context }: { context: { url?: string; prompt: string; context?: Record<string, unknown> } }) => {
     const { url, prompt, context: extra } = context;
     try {
       const instructions = url
@@ -128,8 +131,9 @@ export const zapierAiQuery = createTool({
         instructions,
       });
       return { success: true, data: res?.results || res, message: "AI query completed" };
-    } catch (error: any) {
-      return { success: false, data: null, message: `AI query failed: ${error.message}` };
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      return { success: false, data: null, message: `AI query failed: ${errorMessage}` };
     }
   },
 });
@@ -149,7 +153,7 @@ export const searchFAQDatabase = createTool({
     })).optional(),
     message: z.string(),
   }),
-  execute: async ({ context }: { context: any }) => {
+  execute: async ({ context }: { context: { query: string } }) => {
     const { query } = context;
 
     try {
@@ -266,12 +270,13 @@ export const searchFAQDatabase = createTool({
           ? `Found ${faqResults.length} FAQ result(s) for "${query}"`
           : `No FAQ results found for "${query}"`
       };
-    } catch (error: any) {
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : "Unknown error";
       console.error("FAQ search error:", error);
       return {
         success: false,
         results: [],
-        message: `FAQ search failed: ${error.message}`
+        message: `FAQ search failed: ${errorMessage}`
       };
     }
   },
