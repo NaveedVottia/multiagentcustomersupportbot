@@ -31,7 +31,7 @@ export const repairAgentProductSelection = new Agent({
 // Bind prompt from Langfuse
 (async () => {
   try {
-    const instructions = await loadLangfusePrompt("repair-agent", { label: "production" });
+    const instructions = await loadLangfusePrompt("repair-agent", { cacheTtlMs: 0 , label: "production" });
     if (instructions) {
       // Use the correct method to update instructions
       (repairAgentProductSelection as any).__updateInstructions(instructions);

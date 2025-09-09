@@ -17,7 +17,7 @@ try {
     secretKey: process.env.LANGFUSE_SECRET_KEY,
     baseUrl: process.env.LANGFUSE_HOST,
   });
-  const promptClient = await langfuse.getPrompt("repair-history-ticket", undefined, { cacheTtlSeconds: 1 });
+  const promptClient = await langfuse.getPrompt("repair-history-ticket", undefined, { cacheTtlSeconds: 0 });
   REPAIR_HISTORY_INSTRUCTIONS = promptClient?.prompt?.trim() || "";
   console.log(`[Langfuse] ✅ Loaded repair-history-ticket prompt via SDK (v${promptClient.version})`);
 } catch (error) {

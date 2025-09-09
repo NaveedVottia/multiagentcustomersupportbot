@@ -31,7 +31,7 @@ export const repairVisitConfirmationAgent = new Agent({
 // Bind prompt from Langfuse
 (async () => {
   try {
-    const prompt = await loadLangfusePrompt("repair-scheduling", { label: "production" });
+    const prompt = await loadLangfusePrompt("repair-scheduling", {cacheTtlMs: 0 , label: "production" });
     (repairVisitConfirmationAgent as any).instructions = prompt;
     try {
       await langfuse.logPrompt("repair-scheduling", { label: "production", agentId: "repair-scheduling" }, prompt, { length: prompt?.length || 0 });
