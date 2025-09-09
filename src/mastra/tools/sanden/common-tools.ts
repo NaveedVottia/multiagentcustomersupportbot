@@ -169,70 +169,30 @@ export const searchFAQDatabase = createTool({
 
       // Parse the results and filter for partial matches
       let allFaqResults: Array<{question: string; answer: string; url: string}> = [];
+      
       if (result && result.results) {
         try {
-          let parsed: any = result.results;
-          if (typeof parsed === "string") parsed = JSON.parse(parsed);
-
-          // Helper to push rows from a raw_rows JSON string
-          const pushFromRawRows = (rawRowsStr: string) => {
-            try {
-              const rawRows = JSON.parse(rawRowsStr);
+          // Handle the MCP response structure
+          const results = result.results;
+          
+          // Check if results is an array and contains raw_rows
+          if (Array.isArray(results) && results.length > 0) {
+            const firstResult = results[0];
+            if (firstResult && typeof firstResult.raw_rows === "string") {
+              // Parse the raw_rows JSON string
+              const rawRows = JSON.parse(firstResult.raw_rows);
               if (Array.isArray(rawRows)) {
                 for (const row of rawRows) {
-                  if (Array.isArray(row)) {
+                  if (Array.isArray(row) && row.length >= 4) {
+                    // All rows are data rows, no header to skip
                     allFaqResults.push({
-                      question: String(row[1] || ""), // Col B
-                      answer: String(row[2] || ""),   // Col C
-                      url: String(row[3] || ""),      // Col D
+                      question: String(row[1] || ""), // Col B - Question
+                      answer: String(row[2] || ""),   // Col C - Answer
+                      url: String(row[3] || ""),      // Col D - URL
                     });
                   }
                 }
               }
-            } catch {}
-          };
-
-          // Case 1: results is an array
-          if (Array.isArray(parsed)) {
-            for (const item of parsed) {
-              if (item && typeof item === "object") {
-                // If Zapier returned raw_rows inside each item
-                if (typeof item.raw_rows === "string") {
-                  pushFromRawRows(item.raw_rows);
-                } else if (item["COL$B"] || item["COL$C"]) {
-                  // Direct column-mapped object
-                  allFaqResults.push({
-                    question: String(item["COL$B"] || item.Question || item.question || ""),
-                    answer: String(item["COL$C"] || item.Answer || item.answer || ""),
-                    url: String(item["COL$D"] || item.FAQ_URL || item.url || ""),
-                  });
-                }
-              }
-            }
-          }
-
-          // Case 2: results is an object (possibly with numeric keys)
-          if (!Array.isArray(parsed) && parsed && typeof parsed === "object") {
-            // Top-level raw_rows
-            if (typeof parsed.raw_rows === "string") {
-              pushFromRawRows(parsed.raw_rows);
-            }
-            // Numeric-keyed or nested objects containing raw_rows
-            for (const val of Object.values(parsed)) {
-              if (val && typeof val === "object" && typeof (val as any).raw_rows === "string") {
-                pushFromRawRows((val as any).raw_rows);
-              }
-            }
-          }
-
-          // Fallback: if nothing collected yet and parsed looks like direct rows
-          if (!allFaqResults.length && Array.isArray(parsed)) {
-            for (const item of parsed) {
-              allFaqResults.push({
-                question: String(item?.Question || item?.question || ""),
-                answer: String(item?.Answer || item?.answer || ""),
-                url: String(item?.FAQ_URL || item?.url || ""),
-              });
             }
           }
         } catch (parseError) {

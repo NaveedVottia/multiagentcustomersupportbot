@@ -6,37 +6,37 @@ import { orchestratorTools } from "../../tools/sanden/orchestrator-tools.js";
 import { repairTools } from "../../tools/sanden/repair-tools.js";
 import { memoryTools } from "../../tools/sanden/memory-tools.js";
 import { z } from "zod";
-import dotenv from "dotenv";
-import path from "path";
-import { fileURLToPath } from "url";
-import { sharedMastraMemory } from "../../shared-memory.js";
-import { langfuse } from "../../../integrations/langfuse.js";
+import { sharedMastraMemory, createMemoryIds, storeCustomerData } from "../../shared-memory.js";
+import { loadLangfusePrompt } from "../../prompts/langfuse.js";
 
-// Load environment variables with absolute path
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-dotenv.config({ path: path.resolve(__dirname, "../../../../server.env") });
+// Initialize agent with async prompt loading
+let routingAgentCustomerIdentification: Agent;
 
-const defaultPrompt = `
-あなたはサンデン・リテールシステムの修理受付AIエージェントです。
-顧客の識別と修理の受付を行います。
+async function initializeAgent() {
+  const instructions = await loadLangfusePrompt("customer-identification", { cacheTtlMs: 0, label: "production" });
+  console.log(`🔍 [DEBUG] Customer identification prompt loaded: ${instructions ? '✅ Success' : '❌ Failed'}`);
 
-【主な役割】
-1. 顧客情報の確認・識別
-2. 修理内容のヒアリング
-3. 適切なエージェントへの振り分け
+  routingAgentCustomerIdentification = new Agent({
+    name: "customer-identification",
+    description: "サンデン・リテールシステム修理受付AI , 顧客識別エージェント",
+    instructions: instructions,
+    model: bedrock("anthropic.claude-3-5-sonnet-20240620-v1:0", {
+      temperature: 0.1,
+      maxTokens: 1000,
+    }),
+    tools: {
+      // Re-enable all tools with fixed schemas
+      ...commonTools,
+      ...customerTools,
+      delegateTo: enhancedDelegateTo,
+      lookupCustomerFromDatabase: enhancedLookupCustomerFromDatabase,
+      directRepairHistory: directRepairHistoryTool,
+    },
+    memory: sharedMastraMemory, // Re-enable shared memory
+  });
 
-【対応手順】
-1. 顧客の基本情報（会社名、連絡先等）を確認
-2. 修理対象製品の情報を収集
-3. 問題の詳細をヒアリング
-4. 必要に応じて他の専門エージェントに振り分け
-
-常に丁寧で親切な対応を心がけてください。
-`;
-
-// Load instructions from Langfuse using existing integration
-const prompt = await langfuse.getPromptText('customer-identification', 'production') || defaultPrompt;
+  return routingAgentCustomerIdentification;
+}
 
 // Debug logging
 console.log("🔍 Customer Identification Agent Configuration:");
@@ -125,15 +125,11 @@ const enhancedLookupCustomerFromDatabase = {
       try {
         const customerData = result.customerData;
         
-        // Store individual fields in memory
-        sharedMastraMemory.set("customerId", customerData.customerId);
-        sharedMastraMemory.set("storeName", customerData.storeName);
-        sharedMastraMemory.set("email", customerData.email);
-        sharedMastraMemory.set("phone", customerData.phone);
-        sharedMastraMemory.set("location", customerData.location);
-        sharedMastraMemory.set("lastInteraction", new Date().toISOString());
-        sharedMastraMemory.set("currentAgent", "customer-identification");
-        sharedMastraMemory.set("sessionStart", new Date().toISOString());
+        // Create memory IDs for this session
+        const memIds = createMemoryIds(`session-${Date.now()}`, customerData.customerId);
+        
+        // Store customer data using the proper shared memory functions
+        await storeCustomerData(memIds, customerData);
         
         console.log(`🔍 [DEBUG] Stored complete customer profile in shared memory:`, {
           customerId: customerData.customerId,
@@ -151,29 +147,13 @@ const enhancedLookupCustomerFromDatabase = {
   }
 };
 
-// Create agent with instructions loaded from Langfuse
-export const routingAgentCustomerIdentification = new Agent({ 
-  name: "customer-identification",
-  description: "サンデン・リテールシステム修理受付AI , 顧客識別エージェント",
-  instructions: "あなたは修理サービスアシスタントです。こんにちは！何かお手伝いできることはありますか？",
-  model: bedrock("anthropic.claude-3-sonnet-20240229-v1:0", {
-    temperature: 0.1,
-    maxTokens: 1000,
-  }),
-  // Completely disable tools and memory to test basic functionality
-});
+// Initialize the agent asynchronously
+const agentPromise = initializeAgent();
 
-// Debug: Log available tools
-console.log("🔍 [DEBUG] Customer Identification Agent Tools:", Object.keys({
-  // Temporarily no tools to test basic functionality
-  // ...customerTools,
-  // ...commonTools,
-  // delegateTo: enhancedDelegateTo,
-  // lookupCustomerFromDatabase: enhancedLookupCustomerFromDatabase,
-  // directRepairHistory: directRepairHistoryTool,
-}));
+// Export the agent initialization function and promise
+export { agentPromise, initializeAgent, sharedMastraMemory };
 
-console.log("✅ Customer Identification Agent created with Langfuse prompt loading");
+// Export the agent as a promise for compatibility
+export const getRoutingAgentCustomerIdentification = () => agentPromise;
 
-// Export the shared memory instance for use in other agents
-export { sharedMastraMemory };
+console.log("✅ Customer Identification Agent module loaded");

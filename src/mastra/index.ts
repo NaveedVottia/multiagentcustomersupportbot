@@ -15,8 +15,8 @@ console.log("LANGFUSE_HOST:", process.env.LANGFUSE_HOST ? "✅ Set" : "❌ Missi
 console.log("LANGFUSE_PUBLIC_KEY:", process.env.LANGFUSE_PUBLIC_KEY ? "✅ Set" : "❌ Missing");
 console.log("LANGFUSE_SECRET_KEY:", process.env.LANGFUSE_SECRET_KEY ? "✅ Set" : "❌ Missing");
 
-// Import all agents
-import { routingAgentCustomerIdentification } from "./agents/sanden/customer-identification.js";
+// Import all agents (customer-identification is now async)
+import { agentPromise as customerAgentPromise } from "./agents/sanden/customer-identification.js";
 import { repairAgentProductSelection } from "./agents/sanden/product-selection.js";
 import { repairQaAgentIssueAnalysis } from "./agents/sanden/issue-analysis.js";
 import { repairVisitConfirmationAgent } from "./agents/sanden/visit-confirmation.js";
@@ -24,24 +24,28 @@ import { repairVisitConfirmationAgent } from "./agents/sanden/visit-confirmation
 // Create agents asynchronously
 async function createMastraInstance() {
   console.log("🔄 Creating Mastra instance with agents...");
-  
+
+  // Wait for customer identification agent to initialize
+  const customerAgent = await customerAgentPromise;
+  console.log("✅ Customer identification agent initialized");
+
   const mastra = new Mastra({
     // Configure storage at Mastra level
     storage: new LibSQLStore({
       url: "file:./mastra.db", // Local SQLite database file
     }),
-    
+
     // Legacy Mastra configuration - no memory at Mastra level
     agents: {
-      // Main customer identification agent - entry point
-      "customer-identification": routingAgentCustomerIdentification,
-      
+      // Main customer identification agent - entry point (awaited)
+      "customer-identification": customerAgent,
+
       // Sub-agents (accessed via delegateTo tool)
       "repair-agent": repairAgentProductSelection,
       "repair-history-ticket": repairQaAgentIssueAnalysis,
       "repair-scheduling": repairVisitConfirmationAgent,
     },
-    
+
     logger: new PinoLogger({
       name: "Sanden Repair System",
       level: "info",
