@@ -6,7 +6,6 @@ export class LangfuseIntegration {
   private enabled: boolean = false;
 
   constructor() {
-    this.tryInitFromEnv();
   }
 
   private tryInitFromEnv(): void {

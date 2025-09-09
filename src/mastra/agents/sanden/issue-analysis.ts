@@ -1,14 +1,19 @@
 import { Agent } from "@mastra/core/agent";
 import { bedrock } from "@ai-sdk/amazon-bedrock";
-import { repairTools } from "../../tools/sanden/repair-tools";
-import { customerTools } from "../../tools/sanden/customer-tools";
-import { commonTools } from "../../tools/sanden/common-tools";
-import { memoryTools } from "../../tools/sanden/memory-tools";
+import { repairTools } from "../../tools/sanden/repair-tools.js";
+import { customerTools } from "../../tools/sanden/customer-tools.js";
+import { commonTools } from "../../tools/sanden/common-tools.js";
+import { memoryTools } from "../../tools/sanden/memory-tools.js";
 import { Langfuse } from "langfuse";
 import dotenv from "dotenv";
-import { sharedMemory } from "./customer-identification";
+import path from "path";
+import { fileURLToPath } from "url";
+import { sharedMastraMemory } from "../../shared-memory.js";
 
-dotenv.config({ path: "./server.env" });
+// Load environment variables with absolute path
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+dotenv.config({ path: path.resolve(__dirname, "../../../../server.env") });
 
 let REPAIR_HISTORY_INSTRUCTIONS = "";
 try {
@@ -36,5 +41,5 @@ export const repairQaAgentIssueAnalysis = new Agent({
     ...commonTools,
     ...memoryTools,
   },
-  memory: sharedMemory,
+  memory: sharedMastraMemory,
 });

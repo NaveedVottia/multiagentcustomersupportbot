@@ -1,7 +1,7 @@
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import { zapierMcp } from "../../../integrations/zapier-mcp";
-import { sharedMemory } from "../../agents/sanden/customer-identification";
+import { sharedMastraMemory } from "../../shared-memory";
 
 export const createRepairTool = createTool({
   id: "createRepair",
@@ -160,7 +160,7 @@ export const hybridGetRepairsByCustomerIdTool = createTool({
     // If still no customerId, try to get it from shared memory
     if (!customerId) {
       try {
-        customerId = sharedMemory.get("customerId");
+        customerId = sharedMastraMemory.get("customerId");
         console.log(`🔍 [DEBUG] Retrieved customer ID from memory: ${customerId}`);
       } catch (error) {
         console.log(`❌ [DEBUG] Error getting customer ID from memory:`, error);

@@ -20,15 +20,15 @@ try {
   
   console.log("🔍 Available agents:", Object.keys(mastra.agents || {}));
   
-  // Get the orchestrator agent
-  const agent = mastra.getAgentById("orchestrator");
+  // Get the customer-identification agent
+  const agent = mastra.getAgentById("customer-identification");
   
   if (!agent) {
-    console.log("❌ Orchestrator agent not found");
+    console.log("❌ Customer-identification agent not found");
     process.exit(1);
   }
   
-  console.log("✅ Orchestrator agent found");
+  console.log("✅ Customer-identification agent found");
   console.log("🔍 Agent name:", agent.name);
   console.log("🔍 Agent description:", agent.description);
   console.log("🔍 Agent instructions length:", agent.instructions?.length || 0);

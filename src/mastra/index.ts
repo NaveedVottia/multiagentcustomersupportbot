@@ -16,15 +16,22 @@ console.log("LANGFUSE_PUBLIC_KEY:", process.env.LANGFUSE_PUBLIC_KEY ? "✅ Set" 
 console.log("LANGFUSE_SECRET_KEY:", process.env.LANGFUSE_SECRET_KEY ? "✅ Set" : "❌ Missing");
 
 // Import all agents
-import { routingAgentCustomerIdentification } from "./agents/sanden/customer-identification";
-import { repairAgentProductSelection } from "./agents/sanden/product-selection";
-import { repairQaAgentIssueAnalysis } from "./agents/sanden/issue-analysis";
-import { repairVisitConfirmationAgent } from "./agents/sanden/visit-confirmation";
+import { routingAgentCustomerIdentification } from "./agents/sanden/customer-identification.js";
+import { repairAgentProductSelection } from "./agents/sanden/product-selection.js";
+import { repairQaAgentIssueAnalysis } from "./agents/sanden/issue-analysis.js";
+import { repairVisitConfirmationAgent } from "./agents/sanden/visit-confirmation.js";
 
 // Create agents asynchronously
 async function createMastraInstance() {
+  console.log("🔄 Creating Mastra instance with agents...");
+  
   const mastra = new Mastra({
-    // No workflows needed - just agents
+    // Configure storage at Mastra level
+    storage: new LibSQLStore({
+      url: "file:./mastra.db", // Local SQLite database file
+    }),
+    
+    // Legacy Mastra configuration - no memory at Mastra level
     agents: {
       // Main customer identification agent - entry point
       "customer-identification": routingAgentCustomerIdentification,
@@ -34,10 +41,6 @@ async function createMastraInstance() {
       "repair-history-ticket": repairQaAgentIssueAnalysis,
       "repair-scheduling": repairVisitConfirmationAgent,
     },
-    
-    storage: new LibSQLStore({
-      url: process.env.DATABASE_URL || ":memory:",
-    }),
     
     logger: new PinoLogger({
       name: "Sanden Repair System",
@@ -80,9 +83,5 @@ export const mastra = new Proxy({} as any, {
   }
 });
 
-// Start the Mastra server on port 80 (production port)
-const port = 80;
-console.log(`🚀 Mastra server configured for port ${port}`);
-console.log(`🔗 Main endpoint: POST /api/agents/customer-identification/stream`);
-console.log(`🔗 Health check: GET /health`);
-console.log(`🌐 Server will be accessible on port ${port} (configured in Lightsail firewall)`);
+// Mastra instance ready for use by Express server
+console.log(`🔧 Mastra instance ready for Express server integration`);

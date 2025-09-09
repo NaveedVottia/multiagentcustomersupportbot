@@ -1,7 +1,7 @@
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import { zapierMcp } from "../../../integrations/zapier-mcp";
-import { sharedMemory } from "../../agents/sanden/customer-identification";
+import { sharedMastraMemory } from "../../shared-memory";
 
 export const createSchedulingEntry = createTool({
   id: "google_sheets_create_spreadsheet_row",
@@ -56,11 +56,11 @@ export const createSchedulingEntry = createTool({
           });
         } else {
           // Fallback to shared memory
-          customerId = sharedMemory.get("customerId");
-          storeName = sharedMemory.get("storeName");
-          email = sharedMemory.get("email");
-          phone = sharedMemory.get("phone");
-          location = sharedMemory.get("location");
+          customerId = sharedMastraMemory.get("customerId");
+          storeName = sharedMastraMemory.get("storeName");
+          email = sharedMastraMemory.get("email");
+          phone = sharedMastraMemory.get("phone");
+          location = sharedMastraMemory.get("location");
           console.log(`🔍 [DEBUG] Retrieved customer data from shared memory:`, {
             customerId, storeName, email, phone, location
           });
@@ -140,10 +140,11 @@ export const createSchedulingEntry = createTool({
 });
 
 export const googleSheetsCreateRow = createTool({
-  id: "google_sheets_create_spreadsheet_row_at_top",
-  description: "Create a new row at the top of Google Sheets Logs worksheet",
+  id: "google_sheets_create_spreadsheet_row",
+  description: "Create a new row in Google Sheets (Logs, Repairs, Customers, Products worksheets)",
   inputSchema: z.object({
     instructions: z.string().describe("Instructions for creating the row"),
+    worksheet: z.string().describe("Worksheet name: Logs, Repairs, Customers, or Products"),
     "COL__DOLLAR__A": z.string().optional().describe("顧客ID"),
     "COL__DOLLAR__B": z.string().optional().describe("会社名"),
     "COL__DOLLAR__C": z.string().optional().describe("メールアドレス"),
@@ -174,12 +175,37 @@ export const googleSheetsCreateRow = createTool({
   }),
   execute: async ({ context }: { context: any }) => {
     try {
-      const result = await zapierMcp.callTool("google_sheets_create_spreadsheet_row_at_top", context);
-      console.log(`✅ [DEBUG] Created Google Sheets row:`, JSON.stringify(result, null, 2));
+      const result = await zapierMcp.callTool("google_sheets_create_spreadsheet_row", {
+        instructions: context.instructions,
+        worksheet: context.worksheet || "Logs",
+        "COL__DOLLAR__A": context["COL__DOLLAR__A"],
+        "COL__DOLLAR__B": context["COL__DOLLAR__B"],
+        "COL__DOLLAR__C": context["COL__DOLLAR__C"],
+        "COL__DOLLAR__D": context["COL__DOLLAR__D"],
+        "COL__DOLLAR__E": context["COL__DOLLAR__E"],
+        "COL__DOLLAR__F": context["COL__DOLLAR__F"],
+        "COL__DOLLAR__G": context["COL__DOLLAR__G"],
+        "COL__DOLLAR__H": context["COL__DOLLAR__H"],
+        "COL__DOLLAR__I": context["COL__DOLLAR__I"],
+        "COL__DOLLAR__J": context["COL__DOLLAR__J"],
+        "COL__DOLLAR__K": context["COL__DOLLAR__K"],
+        "COL__DOLLAR__L": context["COL__DOLLAR__L"],
+        "COL__DOLLAR__M": context["COL__DOLLAR__M"],
+        "COL__DOLLAR__N": context["COL__DOLLAR__N"],
+        "COL__DOLLAR__O": context["COL__DOLLAR__O"],
+        "COL__DOLLAR__P": context["COL__DOLLAR__P"],
+        "COL__DOLLAR__Q": context["COL__DOLLAR__Q"],
+        "COL__DOLLAR__R": context["COL__DOLLAR__R"],
+        "COL__DOLLAR__S": context["COL__DOLLAR__S"],
+        "COL__DOLLAR__T": context["COL__DOLLAR__T"],
+        "COL__DOLLAR__U": context["COL__DOLLAR__U"],
+        "COL__DOLLAR__V": context["COL__DOLLAR__V"],
+      });
+      console.log(`✅ [DEBUG] Created Google Sheets row in ${context.worksheet || "Logs"} worksheet:`, JSON.stringify(result, null, 2));
       return { 
         success: true, 
         data: result, 
-        message: `Google Sheets row created successfully` 
+        message: `Google Sheets row created successfully in ${context.worksheet || "Logs"} worksheet` 
       };
     } catch (error: any) {
       console.error(`❌ [DEBUG] Error creating Google Sheets row:`, error);

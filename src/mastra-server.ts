@@ -1,16 +1,21 @@
 import express, { Request, Response } from "express";
 import cors from "cors";
+import type { CorsOptions } from "cors";
 import dotenv from "dotenv";
 import path from "path";
 import { fileURLToPath } from "url";
-import { mastraPromise } from "./mastra/index";
-import { langfuse } from "./integrations/langfuse";
+import { mastraPromise } from "./mastra/index.js";
+import { loadLangfusePrompt } from "./mastra/prompts/langfuse.js";
 
-// Load environment variables
-dotenv.config({ path: "./server.env" });
-
+// Load environment variables FIRST with absolute path
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+dotenv.config({ path: path.resolve(__dirname, "../server.env") });
+
+console.log("🔍 Environment variables loaded:");
+console.log(`LANGFUSE_HOST: ${process.env.LANGFUSE_HOST ? '✅ Set' : '❌ Missing'}`);
+console.log(`LANGFUSE_PUBLIC_KEY: ${process.env.LANGFUSE_PUBLIC_KEY ? '✅ Set' : '❌ Missing'}`);
+console.log(`LANGFUSE_SECRET_KEY: ${process.env.LANGFUSE_SECRET_KEY ? '✅ Set' : '❌ Missing'}`);
 
 // Session management for conversation context
 interface SessionData {
@@ -22,6 +27,37 @@ interface SessionData {
 }
 
 const sessionStore = new Map<string, SessionData>();
+
+// Load error messages from Langfuse
+let errorMessages = {
+  streamingError: "",
+  systemError: "",
+  retryError: ""
+};
+
+(async () => {
+  try {
+    const errorPrompt = await loadLangfusePrompt("error-messages", { cacheTtlMs: 0, label: "production" });
+    if (errorPrompt) {
+      // Parse error messages from Langfuse prompt
+      const lines = errorPrompt.split('\n').filter(line => line.trim());
+      for (const line of lines) {
+        if (line.includes('streamingError:')) {
+          errorMessages.streamingError = line.split('streamingError:')[1]?.trim() || "";
+        } else if (line.includes('systemError:')) {
+          errorMessages.systemError = line.split('systemError:')[1]?.trim() || "";
+        } else if (line.includes('retryError:')) {
+          errorMessages.retryError = line.split('retryError:')[1]?.trim() || "";
+        }
+      }
+      console.log(`[Langfuse] ✅ Loaded error messages from Langfuse`);
+    } else {
+      console.warn(`[Langfuse] ⚠️ No error messages prompt available in Langfuse`);
+    }
+  } catch (error) {
+    console.warn(`[Langfuse] ⚠️ Failed to load error messages prompt:`, error);
+  }
+})();
 
 // Helper function to get or create session
 function getSession(sessionId: string): SessionData {
@@ -56,10 +92,25 @@ app.use((req, res, next) => {
 });
 
 // Middleware
-app.use(cors({
-  origin: process.env.CORS_ORIGIN || "*",
+const corsAllowedOrigins = (process.env.CORS_ORIGIN || "").split(",").map(o => o.trim()).filter(Boolean);
+const corsOptions: CorsOptions = {
+  origin: (origin, callback) => {
+    if (!origin) return callback(null, true); // Allow non-browser or same-origin requests
+    if (corsAllowedOrigins.length === 0) return callback(null, true);
+    if (corsAllowedOrigins.includes(origin)) return callback(null, true);
+    return callback(new Error("Not allowed by CORS"));
+  },
   credentials: true,
-}));
+  methods: ["GET", "HEAD", "PUT", "PATCH", "POST", "DELETE", "OPTIONS"],
+  // If not specified, cors will reflect Access-Control-Request-Headers, which is safer for dynamic headers
+  allowedHeaders: undefined,
+  preflightContinue: false,
+  optionsSuccessStatus: 204,
+};
+
+app.use(cors(corsOptions));
+// Explicitly handle preflight requests for all routes (Express 5 compatible)
+app.options(/.*/, cors(corsOptions));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
@@ -142,7 +193,7 @@ async function streamMastraResponse(stream: any, res: Response): Promise<number>
     }
   } catch (error) {
     console.error("❌ Error streaming response:", error);
-    const fallback = "申し訳ございませんが、エラーが発生しました。";
+    const fallback = errorMessages.streamingError || "申し訳ございませんが、エラーが発生しました。";
     totalLength = fallback.length;
     for (const ch of fallback) {
       res.write(`0:"${encodeChunk(ch)}"\n`);
@@ -180,6 +231,15 @@ function writeFinish(res: Response, fullTextLength: number): void {
   res.write(`e:{"finishReason":"stop","usage":{"promptTokens":0,"completionTokens":${fullTextLength}},"isContinued":false}\n`);
   res.write(`d:{"finishReason":"stop","usage":{"promptTokens":0,"completionTokens":${fullTextLength}}}\n`);
   try { (res as any).flush?.(); } catch {}
+}
+
+// Heartbeat to prevent intermediary/proxy timeouts during long model calls
+function startKeepalive(res: Response, intervalMs: number = 10000): NodeJS.Timeout {
+  return setInterval(() => {
+    try {
+      res.write(`0:""\n`);
+    } catch {}
+  }, intervalMs);
 }
 
 // Simple test endpoint without streaming
@@ -240,8 +300,14 @@ app.post("/api/agents/customer-identification/stream", async (req: Request, res:
     const sessionId = getSessionId(req);
     const session = getSession(sessionId);
     
+    // Extract resourceId and threadId from request body (legacy Mastra Memory approach)
+    const resourceId = req.body?.resourceId || session.customerId || sessionId;
+    const threadId = req.body?.threadId || `thread-${sessionId}`;
+    
     console.log(`🔍 Processing request with ${messages.length} messages`);
     console.log(`🔍 Session ID: ${sessionId}`);
+    console.log(`🔍 Resource ID: ${resourceId}`);
+    console.log(`🔍 Thread ID: ${threadId}`);
     console.log(`🔍 Current session:`, JSON.stringify(session, null, 2));
     console.log(`🔍 Request body:`, JSON.stringify(req.body, null, 2));
     
@@ -294,22 +360,6 @@ app.post("/api/agents/customer-identification/stream", async (req: Request, res:
       session.customerId = userInput;
       session.conversationStep = "menu";
       console.log(`🔍 Customer identified: ${session.customerId}`);
-      
-      // Also store customer data in shared memory for tools to access
-      try {
-        const mastra = await mastraPromise;
-        const customerAgent = mastra.getAgentById("customer-identification");
-        if (customerAgent) {
-          const resolvedAgent = await customerAgent;
-          if (resolvedAgent.memory) {
-            resolvedAgent.memory.set("customerId", session.customerId);
-            resolvedAgent.memory.set("sessionId", sessionId);
-            console.log(`🔍 Stored customer data in shared memory: ${session.customerId}`);
-          }
-        }
-      } catch (error) {
-        console.log(`❌ Error storing customer data in shared memory:`, error);
-      }
     }
     
     // Update session timestamp
@@ -322,68 +372,112 @@ app.post("/api/agents/customer-identification/stream", async (req: Request, res:
     
     // Set headers for streaming response
     prepareStreamHeaders(res);
-    
-    // Execute the agent using Mastra's stream method
+    // Emit message id early to satisfy UI expectation and keep connection active
+    const earlyMessageId = `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    writeMessageId(res, earlyMessageId);
+    // Small keepalive to start f0ed stream early
+    res.write(`0:""\n`);
+
+    // Start keepalive before model call
+    const keepaliveTimer = startKeepalive(res);
+
+    // Execute the agent using Mastra's stream method with resourceId and threadId
     const resolvedAgent = await agent; // Resolve the agent promise first
     console.log("🔍 Resolved agent methods:", Object.getOwnPropertyNames(Object.getPrototypeOf(resolvedAgent)));
     console.log("🔍 Resolved agent type:", typeof resolvedAgent);
     console.log("🔍 Resolved agent stream method:", typeof resolvedAgent.stream);
     
-    // Create a context object with session data for tools only
-    const toolContext = {
-      sessionId: sessionId,
-      session: session,
-      customerId: session.customerId
-    };
-    
-    console.log(`🔍 Tool context:`, JSON.stringify(toolContext, null, 2));
-    
-    // Try different methods based on Mastra documentation
+    // Try different methods based on Mastra documentation with memory IDs
     let stream;
+    let result;
+
+    // First try stream method with error handling
     if (typeof resolvedAgent.stream === 'function') {
-      // Don't pass session data in context to avoid message format issues
-      stream = await resolvedAgent.stream(normalizedMessages);
-    } else if (typeof resolvedAgent.execute === 'function') {
-      const result = await resolvedAgent.execute(normalizedMessages);
-      // Convert result to stream format for Mastra f0ed protocol
-      stream = {
-        textStream: (async function* () {
-          if (typeof result === 'string') {
-            yield result;
-          } else if (result && typeof result === 'object' && result.text) {
-            yield result.text;
-          } else if (result && typeof result === 'object' && result.content) {
-            yield result.content;
-          } else {
-            yield JSON.stringify(result);
-          }
-        })()
-      };
-    } else if (typeof resolvedAgent.run === 'function') {
-      const result = await resolvedAgent.run(normalizedMessages);
-      // Convert result to stream format for Mastra f0ed protocol
-      stream = {
-        textStream: (async function* () {
-          if (typeof result === 'string') {
-            yield result;
-          } else if (result && typeof result === 'object' && result.text) {
-            yield result.text;
-          } else if (result && typeof result === 'object' && result.content) {
-            yield result.content;
-          } else {
-            yield JSON.stringify(result);
-          }
-        })()
-      };
-    } else {
-      throw new Error(`Agent does not have stream, execute, or run method. Available methods: ${Object.getOwnPropertyNames(Object.getPrototypeOf(resolvedAgent)).join(', ')}`);
+      try {
+        console.log("🔍 Trying stream method...");
+        stream = await resolvedAgent.stream(normalizedMessages, {
+          resourceId: resourceId,
+          threadId: threadId
+        });
+        console.log("✅ Stream method succeeded");
+      } catch (streamError) {
+        console.log("⚠️ Stream method failed:", streamError instanceof Error ? streamError.message : String(streamError));
+        stream = null; // Reset stream to null so we try fallbacks
+      }
+    }
+
+    // If stream failed or doesn't exist, try execute method
+    if (!stream && typeof resolvedAgent.execute === 'function') {
+      try {
+        console.log("🔍 Trying execute method...");
+        result = await resolvedAgent.execute(normalizedMessages, {
+          resourceId: resourceId,
+          threadId: threadId
+        });
+        console.log("✅ Execute method succeeded, result type:", typeof result);
+
+        // Convert result to stream format for Mastra f0ed protocol
+        stream = {
+          textStream: (async function* () {
+            if (typeof result === 'string') {
+              console.log("🔍 Yielding string result:", result.substring(0, 50) + "...");
+              yield result;
+            } else if (result && typeof result === 'object' && result.text) {
+              console.log("🔍 Yielding object.text result:", result.text.substring(0, 50) + "...");
+              yield result.text;
+            } else if (result && typeof result === 'object' && result.content) {
+              console.log("🔍 Yielding object.content result:", result.content.substring(0, 50) + "...");
+              yield result.content;
+            } else {
+              console.log("🔍 Yielding JSON result:", JSON.stringify(result).substring(0, 50) + "...");
+              yield JSON.stringify(result);
+            }
+          })()
+        };
+      } catch (executeError) {
+        console.log("❌ Execute method failed:", executeError instanceof Error ? executeError.message : String(executeError));
+      }
+    }
+
+    // If execute failed, try run method as last resort
+    if (!stream && typeof resolvedAgent.run === 'function') {
+      try {
+        console.log("🔍 Trying run method...");
+        result = await resolvedAgent.run(normalizedMessages, {
+          resourceId: resourceId,
+          threadId: threadId
+        });
+        console.log("✅ Run method succeeded, result type:", typeof result);
+
+        // Convert result to stream format for Mastra f0ed protocol
+        stream = {
+          textStream: (async function* () {
+            if (typeof result === 'string') {
+              console.log("🔍 Yielding string result:", result.substring(0, 50) + "...");
+              yield result;
+            } else if (result && typeof result === 'object' && result.text) {
+              console.log("🔍 Yielding object.text result:", result.text.substring(0, 50) + "...");
+              yield result.text;
+            } else if (result && typeof result === 'object' && result.content) {
+              console.log("🔍 Yielding object.content result:", result.content.substring(0, 50) + "...");
+              yield result.content;
+            } else {
+              console.log("🔍 Yielding JSON result:", JSON.stringify(result).substring(0, 50) + "...");
+              yield JSON.stringify(result);
+            }
+          })()
+        };
+      } catch (runError) {
+        console.log("❌ Run method failed:", runError instanceof Error ? runError.message : String(runError));
+        throw new Error(`All agent methods failed: ${runError instanceof Error ? runError.message : String(runError)}`);
+      }
+    }
+
+    if (!stream) {
+      throw new Error(`Agent does not have working stream, execute, or run method. Available methods: ${Object.getOwnPropertyNames(Object.getPrototypeOf(resolvedAgent)).join(', ')}`);
     }
     
-    // Generate a unique message ID
-    const messageId = `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-    
-    // Send the message ID first
-    writeMessageId(res, messageId);
+    // Message id already sent early
     
     // Stream using Mastra-compliant helper (0:"..." lines)
     const fullTextLength = await streamMastraResponse(stream, res);
@@ -406,15 +500,23 @@ app.post("/api/agents/customer-identification/stream", async (req: Request, res:
 app.post("/api/agents/repair-workflow-orchestrator/stream", async (req: Request, res: Response) => {
   try {
     const messages = Array.isArray(req.body?.messages) ? req.body.messages : [];
+    const sessionId = getSessionId(req);
+    const session = getSession(sessionId);
+
+    // Extract resourceId and threadId from request body (legacy Mastra Memory approach)
+    const resourceId = req.body?.resourceId || session.customerId || sessionId;
+    const threadId = req.body?.threadId || `thread-${sessionId}`;
+
     const agent = await getAgentById("customer-identification");
-    
+
     if (!agent) {
       return res.status(500).json({ error: "Agent 'customer-identification' not found" });
     }
 
     console.log(`🔍 Processing UI request with ${messages.length} messages`);
-    console.log(`🔍 Request body:`, JSON.stringify(req.body, null, 2));
-    
+    console.log(`🔍 Resource ID: ${resourceId}`);
+    console.log(`🔍 Thread ID: ${threadId}`);
+
     // Normalize messages to handle complex UI format
     const normalizedMessages = messages.map((msg: any) => {
       if (msg.role === 'user' && Array.isArray(msg.content)) {
@@ -434,77 +536,114 @@ app.post("/api/agents/repair-workflow-orchestrator/stream", async (req: Request,
       }
       return msg;
     });
-    
+
     console.log(`🔍 Normalized messages:`, JSON.stringify(normalizedMessages, null, 2));
-    
+
     // Set headers for streaming response
     prepareStreamHeaders(res);
-    
-    // Execute the agent using Mastra's stream method
-    const resolvedAgent = await agent; // Resolve the agent promise first
-    console.log("🔍 Resolved agent methods:", Object.getOwnPropertyNames(Object.getPrototypeOf(resolvedAgent)));
-    console.log("🔍 Resolved agent type:", typeof resolvedAgent);
-    console.log("🔍 Resolved agent stream method:", typeof resolvedAgent.stream);
-    
-    // Try different methods based on Mastra documentation
+    // Emit message id early
+    const earlyMessageId = `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    writeMessageId(res, earlyMessageId);
+    res.write(`0:""\n`);
+
+    // Start keepalive before model call
+    const keepaliveTimer = startKeepalive(res);
+
+    // Execute the agent using improved fallback logic
+    const resolvedAgent = await agent;
+    console.log("🔍 Agent methods:", Object.getOwnPropertyNames(Object.getPrototypeOf(resolvedAgent)));
+
+    // Try different methods with proper error handling
     let stream;
+    let result;
+
+    // First try stream method with error handling
     if (typeof resolvedAgent.stream === 'function') {
-      stream = await resolvedAgent.stream(normalizedMessages);
-    } else if (typeof resolvedAgent.execute === 'function') {
-      const result = await resolvedAgent.execute(normalizedMessages);
-      // Convert result to stream format for Mastra f0ed protocol
-      stream = {
-        textStream: (async function* () {
-          if (typeof result === 'string') {
-            yield result;
-          } else if (result && typeof result === 'object' && result.text) {
-            yield result.text;
-          } else if (result && typeof result === 'object' && result.content) {
-            yield result.content;
-          } else {
-            yield JSON.stringify(result);
-          }
-        })()
-      };
-    } else if (typeof resolvedAgent.run === 'function') {
-      const result = await resolvedAgent.run(normalizedMessages);
-      // Convert result to stream format for Mastra f0ed protocol
-      stream = {
-        textStream: (async function* () {
-          if (typeof result === 'string') {
-            yield result;
-          } else if (result && typeof result === 'object' && result.text) {
-            yield result.text;
-          } else if (result && typeof result === 'object' && result.content) {
-            yield result.content;
-          } else {
-            yield JSON.stringify(result);
-          }
-        })()
-      };
-    } else {
-      throw new Error(`Agent does not have stream, execute, or run method. Available methods: ${Object.getOwnPropertyNames(Object.getPrototypeOf(resolvedAgent)).join(', ')}`);
+      try {
+        console.log("🔍 Trying stream method...");
+        stream = await resolvedAgent.stream(normalizedMessages, {
+          resourceId: resourceId,
+          threadId: threadId
+        });
+        console.log("✅ Stream method succeeded");
+      } catch (streamError) {
+        console.log("⚠️ Stream method failed:", streamError instanceof Error ? streamError.message : String(streamError));
+        stream = null;
+      }
     }
-    
-    // Generate a unique message ID
-    const messageId = `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-    
-    // Send the message ID first
-    writeMessageId(res, messageId);
-    
-    // Stream using Mastra-compliant helper (0:"..." lines)
+
+    // If stream failed, try execute method
+    if (!stream && typeof resolvedAgent.execute === 'function') {
+      try {
+        console.log("🔍 Trying execute method...");
+        result = await resolvedAgent.execute(normalizedMessages, {
+          resourceId: resourceId,
+          threadId: threadId
+        });
+        console.log("✅ Execute method succeeded, result type:", typeof result);
+
+        // Convert result to stream format for Mastra f0ed protocol
+        stream = {
+          textStream: (async function* () {
+            if (typeof result === 'string') {
+              console.log("🔍 Yielding string result");
+              yield result;
+            } else if (result && typeof result === 'object' && result.text) {
+              console.log("🔍 Yielding object.text result");
+              yield result.text;
+            } else if (result && typeof result === 'object' && result.content) {
+              console.log("🔍 Yielding object.content result");
+              yield result.content;
+            } else {
+              console.log("🔍 Yielding JSON result");
+              yield JSON.stringify(result);
+            }
+          })()
+        };
+      } catch (executeError) {
+        console.log("❌ Execute method failed:", executeError instanceof Error ? executeError.message : String(executeError));
+        // Fallback to simple message
+        stream = {
+          textStream: (async function* () {
+            yield errorMessages.retryError || "申し訳ございませんが、エラーが発生しました。再度お試しください。";
+          })()
+        };
+      }
+    }
+
+    if (!stream) {
+      // Ultimate fallback
+      stream = {
+        textStream: (async function* () {
+          yield errorMessages.systemError || "システムエラーが発生しました。";
+        })()
+      };
+    }
+
+    // Message id already sent early
+
+    // Stream using Mastra-compliant helper
     const fullTextLength = await streamMastraResponse(stream, res);
-    
+
     // Send finish metadata
     writeFinish(res, fullTextLength);
-    
+    clearInterval(keepaliveTimer);
+    clearInterval(keepaliveTimer);
+
     console.log(`✅ UI Response complete, length: ${fullTextLength} characters`);
     res.end();
     
   } catch (error: unknown) {
     console.error("❌ [Endpoint] /repair-workflow-orchestrator/stream error:", error);
     const message = error instanceof Error ? error.message : "Internal server error";
-    return res.status(500).json({ error: message });
+    
+    // Check if headers have already been sent
+    if (!res.headersSent) {
+      return res.status(500).json({ error: message });
+    } else {
+      console.error("❌ Headers already sent, cannot send error response");
+      res.end();
+    }
   }
 });
 
@@ -540,22 +679,26 @@ app.post("/api/agents/orchestrator/stream", async (req: Request, res: Response) 
     
     // Set headers for streaming response
     prepareStreamHeaders(res);
-    
+    // Emit message id early
+    const earlyMessageId = `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    writeMessageId(res, earlyMessageId);
+    res.write(`0:""\n`);
+
+    // Start keepalive before model call
+    const keepaliveTimer = startKeepalive(res);
+
     // Execute the agent using Mastra's stream method
     const resolvedAgent = await agent;
     const stream = await resolvedAgent.stream(normalizedMessages);
     
-    // Generate a unique message ID
-    const messageId = `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-    
-    // Send the message ID first
-    writeMessageId(res, messageId);
+    // Message id already sent early
     
     // Stream using Mastra-compliant helper (0:"..." lines)
     const fullTextLength = await streamMastraResponse(stream, res);
     
     // Send finish metadata
     writeFinish(res, fullTextLength);
+    clearInterval(keepaliveTimer);
     
     console.log(`✅ Orchestrator Response complete, length: ${fullTextLength} characters`);
     res.end();
@@ -579,16 +722,16 @@ app.post("/api/agents/repair-agent/stream", async (req: Request, res: Response) 
 
     // Set headers for streaming response
     prepareStreamHeaders(res);
+    // Emit message id early
+    const earlyMessageId = `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    writeMessageId(res, earlyMessageId);
+    res.write(`0:""\n`);
 
     // Execute the agent using Mastra's stream method
     const resolvedAgent = await agent; // Resolve the agent promise first
     const stream = await resolvedAgent.stream(messages);
     
-    // Generate a unique message ID
-    const messageId = `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-    
-    // Send the message ID first
-    writeMessageId(res, messageId);
+    // Message id already sent early
     
     // Stream using Mastra-compliant helper (0:"..." lines)
     const fullTextLength = await streamMastraResponse(stream, res);

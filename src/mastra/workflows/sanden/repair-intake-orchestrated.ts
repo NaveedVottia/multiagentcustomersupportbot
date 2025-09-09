@@ -57,7 +57,7 @@ const externalApiStreamStep = createStep({
 
     try {
       // Connect to external API streaming endpoint
-      const externalApiUrl = "https://mastra.demo.dev-maestra.vottia.me/api/agents/repair-workflow-orchestrator/stream";
+      const externalApiUrl = "http://54.150.79.178:80/api/agents/repair-workflow-orchestrator/stream";
       
       console.log(`🔄 Connecting to external API: ${externalApiUrl}`);
       console.log(`📝 User Input: ${userInput}`);

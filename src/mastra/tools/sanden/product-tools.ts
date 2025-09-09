@@ -1,7 +1,7 @@
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import { zapierMcp } from "../../../integrations/zapier-mcp";
-import { sharedMemory } from "../../agents/sanden/customer-identification";
+import { sharedMastraMemory } from "../../shared-memory";
 
 export const searchProductsTool = createTool({
   id: "searchProducts",
@@ -55,7 +55,7 @@ export const getProductsByCustomerIdTool = createTool({
       const result = await zapierMcp.callTool("google_sheets_lookup_spreadsheet_rows_advanced", {
         instructions: `Get all products for customer ID: ${customerId}`,
         worksheet: "Products",
-        lookup_key: "COL$B",
+        lookup_key: "顧客ID",
         lookup_value: customerId,
         row_count: "50"
       });
@@ -96,7 +96,7 @@ export const hybridGetProductsByCustomerIdTool = createTool({
     // If customerId is not provided, try to get it from shared memory
     if (!customerId) {
       try {
-        customerId = sharedMemory.get("customerId");
+        customerId = sharedMastraMemory.get("customerId");
         console.log(`🔍 [DEBUG] Retrieved customer ID from memory: ${customerId}`);
       } catch (error) {
         console.log(`❌ [DEBUG] Error getting customer ID from memory:`, error);
@@ -166,7 +166,6 @@ export const hybridGetProductsByCustomerIdTool = createTool({
         const products = rows.map((row: any) => ({
           productId: row["COL$A"] || row["製品ID"],
           customerId: row["COL$B"] || row["顧客ID"],
-          productCategory: row["COL$C"] || row["製品カテゴリ"],
           model: row["COL$D"] || row["型式"],
           serialNumber: row["COL$E"] || row["シリアル番号"],
           warrantyStatus: row["COL$F"] || row["保証状況"]

@@ -1,6 +1,6 @@
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
-import { sharedMemory } from "../../agents/sanden/customer-identification";
+import { sharedMastraMemory } from "../../shared-memory";
 
 // Working memory template for customer profiles
 const WORKING_MEMORY_TEMPLATE = `# Customer Profile
@@ -13,17 +13,17 @@ const WORKING_MEMORY_TEMPLATE = `# Customer Profile
 - **Current Agent**: {{currentAgent}}
 - **Session Start**: {{sessionStart}}`;
 
-// Helper function to get formatted customer profile from memory
+// Helper function to get formatted customer profile from memory (legacy approach)
 const getCustomerProfile = () => {
   try {
-    const customerId = sharedMemory.get("customerId");
-    const storeName = sharedMemory.get("storeName");
-    const email = sharedMemory.get("email");
-    const phone = sharedMemory.get("phone");
-    const location = sharedMemory.get("location");
-    const lastInteraction = sharedMemory.get("lastInteraction");
-    const currentAgent = sharedMemory.get("currentAgent");
-    const sessionStart = sharedMemory.get("sessionStart");
+    const customerId = sharedMastraMemory.get("customerId");
+    const storeName = sharedMastraMemory.get("storeName");
+    const email = sharedMastraMemory.get("email");
+    const phone = sharedMastraMemory.get("phone");
+    const location = sharedMastraMemory.get("location");
+    const lastInteraction = sharedMastraMemory.get("lastInteraction");
+    const currentAgent = sharedMastraMemory.get("currentAgent");
+    const sessionStart = sharedMastraMemory.get("sessionStart");
     
     if (customerId) {
       return WORKING_MEMORY_TEMPLATE
@@ -57,7 +57,7 @@ export const getCustomerProfileTool = createTool({
   execute: async () => {
     try {
       const profile = getCustomerProfile();
-      const customerId = sharedMemory.get("customerId");
+      const customerId = sharedMastraMemory.get("customerId");
       
       if (profile && customerId) {
         console.log(`🔍 [DEBUG] Retrieved customer profile for ${customerId}`);
@@ -97,8 +97,8 @@ export const updateCurrentAgentTool = createTool({
   execute: async ({ input }: { input: any }) => {
     try {
       const { agentName } = input;
-      sharedMemory.set("currentAgent", agentName);
-      sharedMemory.set("lastInteraction", new Date().toISOString());
+      sharedMastraMemory.set("currentAgent", agentName);
+      sharedMastraMemory.set("lastInteraction", new Date().toISOString());
       
       console.log(`🔍 [DEBUG] Updated current agent to: ${agentName}`);
       return {
@@ -133,7 +133,7 @@ export const clearCustomerMemoryTool = createTool({
       
       keysToClear.forEach(key => {
         try {
-          sharedMemory.set(key, null);
+          sharedMastraMemory.set(key, null);
         } catch (error) {
           console.log(`❌ [DEBUG] Failed to clear key ${key}:`, error);
         }

@@ -251,6 +251,23 @@ async function createAllPrompts() {
     });
     console.log("✅ Repair scheduling prompt created, version:", repairScheduling.version);
     
+    // Create error-messages prompt for server fallbacks
+    const errorMessagesPrompt = `streamingError: 申し訳ございません、応答の送信中にエラーが発生しました。しばらくしてから再度お試しください。
+systemError: システムエラーが発生しました。時間をおいて再度お試しください。
+retryError: 申し訳ありません、現在処理が混み合っています。少し待ってから再度お試しください。`;
+
+    try {
+      const errorMessages = await langfuse.createPrompt({
+        name: "error-messages",
+        prompt: errorMessagesPrompt,
+        isActive: true,
+        labels: ["production"],
+      });
+      console.log("✅ Error messages prompt created, version:", errorMessages.version);
+    } catch (e) {
+      console.warn("⚠️ Skipped creating error-messages (maybe exists):", e?.message || e);
+    }
+
     console.log("✅ All prompts created successfully!");
     
   } catch (error) {

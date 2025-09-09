@@ -1,102 +1,49 @@
 import { Agent } from "@mastra/core/agent";
-import { Memory } from "@mastra/memory";
 import { bedrock } from "@ai-sdk/amazon-bedrock";
-import { customerTools } from "../../tools/sanden/customer-tools";
-import { commonTools } from "../../tools/sanden/common-tools";
-import { orchestratorTools } from "../../tools/sanden/orchestrator-tools";
-import { repairTools } from "../../tools/sanden/repair-tools";
-import { Langfuse } from "langfuse";
+import { customerTools } from "../../tools/sanden/customer-tools.js";
+import { commonTools } from "../../tools/sanden/common-tools.js";
+import { orchestratorTools } from "../../tools/sanden/orchestrator-tools.js";
+import { repairTools } from "../../tools/sanden/repair-tools.js";
+import { memoryTools } from "../../tools/sanden/memory-tools.js";
 import { z } from "zod";
 import dotenv from "dotenv";
+import path from "path";
+import { fileURLToPath } from "url";
+import { sharedMastraMemory } from "../../shared-memory.js";
+import { langfuse } from "../../../integrations/langfuse.js";
 
-// Load environment variables
-dotenv.config({ path: "./server.env" });
+// Load environment variables with absolute path
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+dotenv.config({ path: path.resolve(__dirname, "../../../../server.env") });
 
-// Load Langfuse prompt function (same pattern as other agents)
-async function loadLangfusePrompt(promptName: string, options: any = {}) {
-  try {
-    const langfuse = new Langfuse({
-      publicKey: process.env.LANGFUSE_PUBLIC_KEY,
-      secretKey: process.env.LANGFUSE_SECRET_KEY,
-      baseUrl: process.env.LANGFUSE_HOST,
-    });
-    
-    const promptClient = await langfuse.getPrompt(promptName, undefined, options);
-    if (promptClient?.prompt?.trim()) {
-      console.log(`[Langfuse] ✅ Loaded ${promptName} prompt via SDK (v${promptClient.version})`);
-      return promptClient.prompt.trim();
-    }
-    return "";
-  } catch (error) {
-    console.error(`[Langfuse] Failed to load ${promptName} prompt:`, error);
-    return "";
-  }
-}
+const defaultPrompt = `
+あなたはサンデン・リテールシステムの修理受付AIエージェントです。
+顧客の識別と修理の受付を行います。
+
+【主な役割】
+1. 顧客情報の確認・識別
+2. 修理内容のヒアリング
+3. 適切なエージェントへの振り分け
+
+【対応手順】
+1. 顧客の基本情報（会社名、連絡先等）を確認
+2. 修理対象製品の情報を収集
+3. 問題の詳細をヒアリング
+4. 必要に応じて他の専門エージェントに振り分け
+
+常に丁寧で親切な対応を心がけてください。
+`;
+
+// Load instructions from Langfuse using existing integration
+const prompt = await langfuse.getPromptText('customer-identification', 'production') || defaultPrompt;
 
 // Debug logging
 console.log("🔍 Customer Identification Agent Configuration:");
 console.log("📝 Langfuse Prompt Loading: ✅ Enabled");
 console.log("📝 Model Temperature: 0.1 (deterministic)");
 console.log("📝 Max Tokens: 1000");
-
-// Session-aware shared memory that can work with server session management
-const createSessionAwareMemory = (sessionId: string) => {
-  return {
-    _data: new Map(),
-    sessionId: sessionId,
-    set: function(key: string, value: any) {
-      this._data.set(key, value);
-      console.log(`🔍 [DEBUG] Session ${this.sessionId} Memory set: ${key} = ${value}`);
-    },
-    get: function(key: string) {
-      const value = this._data.get(key);
-      console.log(`🔍 [DEBUG] Session ${this.sessionId} Memory get: ${key} = ${value}`);
-      return value;
-    },
-    clear: function() {
-      this._data.clear();
-      console.log(`🔍 [DEBUG] Session ${this.sessionId} Memory cleared`);
-    },
-    // Add required Mastra methods
-    __registerMastra: function() {
-      console.log(`🔍 [DEBUG] Session ${this.sessionId} Memory __registerMastra called`);
-      return this;
-    },
-    getMemory: function() {
-      return this;
-    },
-    hasOwnMemory: function() {
-      return true;
-    },
-    getMemoryTools: function() {
-      return [];
-    },
-    fetchMemory: function() {
-      return Promise.resolve([]);
-    },
-    getMemoryMessages: function() {
-      return [];
-    },
-    setStorage: function(storage: any) {
-      console.log(`🔍 [DEBUG] Session ${this.sessionId} Memory setStorage called with:`, storage);
-      return this;
-    }
-  };
-};
-
-// Default shared memory for backward compatibility
-const sharedMemory = createSessionAwareMemory("default");
-
-// Working memory template for customer profiles
-const WORKING_MEMORY_TEMPLATE = `# Customer Profile
-- **Customer ID**: {{customerId}}
-- **Store Name**: {{storeName}}
-- **Email**: {{email}}
-- **Phone**: {{phone}}
-- **Location**: {{location}}
-- **Last Interaction**: {{lastInteraction}}
-- **Current Agent**: {{currentAgent}}
-- **Session Start**: {{sessionStart}}`;
+console.log("📝 Memory: ✅ Using proper Mastra Memory with resource/thread IDs");
 
 // Create a custom delegateTo tool that automatically includes customer ID from memory
 const enhancedDelegateTo = {
@@ -107,31 +54,14 @@ const enhancedDelegateTo = {
     const agentContext = parsed.context || {};
     const message = parsed.message || "顧客情報の確認をお願いします。";
     
-    // Get customer ID from memory if available
-    let customerId = agentContext.customerId;
-    if (!customerId) {
-      try {
-        // Try to get customer ID from shared memory
-        customerId = sharedMemory.get("customerId");
-        if (customerId) {
-          console.log(`🔍 [DEBUG] Found customer ID from shared memory: ${customerId}`);
-        }
-      } catch (error) {
-        console.log(`❌ [DEBUG] Error getting customer ID from memory:`, error);
-      }
-    }
+    console.log(`🔍 [DEBUG] Delegating to ${agentId} with context:`, JSON.stringify(agentContext));
     
-    // If we have a customer ID, add it to the context
-    const enhancedContext = customerId ? { ...agentContext, customerId } : agentContext;
-    
-    console.log(`🔍 [DEBUG] Delegating to ${agentId} with context:`, JSON.stringify(enhancedContext));
-    
-    // Call the original delegateTo tool with enhanced context
+    // Call the original delegateTo tool
     return orchestratorTools.delegateTo.execute({
       ...args,
       context: {
         ...parsed,
-        context: enhancedContext
+        context: agentContext
       }
     });
   }
@@ -196,14 +126,14 @@ const enhancedLookupCustomerFromDatabase = {
         const customerData = result.customerData;
         
         // Store individual fields in memory
-        sharedMemory.set("customerId", customerData.customerId);
-        sharedMemory.set("storeName", customerData.storeName);
-        sharedMemory.set("email", customerData.email);
-        sharedMemory.set("phone", customerData.phone);
-        sharedMemory.set("location", customerData.location);
-        sharedMemory.set("lastInteraction", new Date().toISOString());
-        sharedMemory.set("currentAgent", "customer-identification");
-        sharedMemory.set("sessionStart", new Date().toISOString());
+        sharedMastraMemory.set("customerId", customerData.customerId);
+        sharedMastraMemory.set("storeName", customerData.storeName);
+        sharedMastraMemory.set("email", customerData.email);
+        sharedMastraMemory.set("phone", customerData.phone);
+        sharedMastraMemory.set("location", customerData.location);
+        sharedMastraMemory.set("lastInteraction", new Date().toISOString());
+        sharedMastraMemory.set("currentAgent", "customer-identification");
+        sharedMastraMemory.set("sessionStart", new Date().toISOString());
         
         console.log(`🔍 [DEBUG] Stored complete customer profile in shared memory:`, {
           customerId: customerData.customerId,
@@ -221,11 +151,11 @@ const enhancedLookupCustomerFromDatabase = {
   }
 };
 
-// Create agent with empty instructions (will be loaded from Langfuse)
+// Create agent with instructions loaded from Langfuse
 export const routingAgentCustomerIdentification = new Agent({ 
   name: "customer-identification",
   description: "サンデン・リテールシステム修理受付AI , 顧客識別エージェント",
-  instructions: "", // Will be loaded from Langfuse
+  instructions: prompt,
   model: bedrock("anthropic.claude-3-5-sonnet-20240620-v1:0", {
     temperature: 0.1, // Lower temperature for more deterministic behavior
     maxTokens: 1000,
@@ -237,24 +167,19 @@ export const routingAgentCustomerIdentification = new Agent({
     lookupCustomerFromDatabase: enhancedLookupCustomerFromDatabase,
     directRepairHistory: directRepairHistoryTool,
   },
-  memory: sharedMemory, // Use shared memory
+  memory: sharedMastraMemory, // Use shared memory
 });
 
-// Bind prompt from Langfuse
-(async () => {
-  try {
-    const instructions = await loadLangfusePrompt("customer-identification", { cacheTtlMs: 0 , label: "production" });
-    if (instructions) {
-      // Use the correct method to update instructions
-      (routingAgentCustomerIdentification as any).__updateInstructions(instructions);
-      console.log(`[Langfuse] ✅ Loaded prompt via SDK: customer-identification`);
-    }
-  } catch (error) {
-    console.error("[Langfuse] Failed to load customer-identification prompt:", error);
-  }
-})();
+// Debug: Log available tools
+console.log("🔍 [DEBUG] Customer Identification Agent Tools:", Object.keys({
+  ...customerTools,
+  ...commonTools,
+  delegateTo: enhancedDelegateTo,
+  lookupCustomerFromDatabase: enhancedLookupCustomerFromDatabase,
+  directRepairHistory: directRepairHistoryTool,
+}));
 
 console.log("✅ Customer Identification Agent created with Langfuse prompt loading");
 
 // Export the shared memory instance for use in other agents
-export { sharedMemory };
+export { sharedMastraMemory };
